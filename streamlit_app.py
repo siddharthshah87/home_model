@@ -120,13 +120,14 @@ monthly_data = pd.DataFrame({
     "Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
     "EV Consumption (kWh)": ev_monthly,
     "Household Consumption (kWh)": household_monthly,
+    "Total Consumption (EV + Household, kWh)": [ev + hh for ev, hh in zip(ev_monthly, household_monthly)],
     "Solar Production (kWh)": solar_monthly,
     "EV Charging Cost (No Solar, $)": ev_cost_no_solar,
-    "EV Charging Cost (NEM 2.0, $)": ev_cost_nem_2,
-    "EV Charging Cost (NEM 3.0, $)": ev_cost_nem_3,
-    "Total Cost (No Solar + EV, $)": total_cost_no_solar,
-    "Total Cost (Solar + EV + NEM 2.0, $)": total_cost_nem_2,
-    "Total Cost (Solar + EV + NEM 3.0, $)": total_cost_nem_3,
+    "EV Charging Cost (Solar with NEM 2.0, $)": ev_cost_nem_2,
+    "EV Charging Cost (Solar with NEM 3.0, $)": ev_cost_nem_3,
+    "Total Cost (No Solar, EV + Household, $)": total_cost_no_solar,
+    "Total Cost (Solar with NEM 2.0 + EV + Household, $)": total_cost_nem_2,
+    "Total Cost (Solar with NEM 3.0 + EV + Household, $)": total_cost_nem_3,
 })
 
 # Results Section
@@ -151,8 +152,8 @@ st.pyplot(fig)
 st.write("#### EV Charging Costs Comparison")
 fig, ax = plt.subplots()
 ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (No Solar, $)"], label="No Solar")
-ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (NEM 2.0, $)"], label="NEM 2.0")
-ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (NEM 3.0, $)"], label="NEM 3.0")
+ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (Solar with NEM 2.0, $)"], label="NEM 2.0")
+ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (Solar with NEM 3.0, $)"], label="NEM 3.0")
 ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
@@ -160,9 +161,9 @@ st.pyplot(fig)
 # 3. Total Monthly Costs
 st.write("#### Total Monthly Costs")
 fig, ax = plt.subplots()
-ax.plot(monthly_data["Month"], monthly_data["Total Cost (No Solar + EV, $)"], label="No Solar")
-ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar + EV + NEM 2.0, $)"], label="Solar + NEM 2.0")
-ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar + EV + NEM 3.0, $)"], label="Solar + NEM 3.0")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (No Solar, EV + Household, $)"], label="No Solar")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar with NEM 2.0 + EV + Household, $)"], label="Solar + NEM 2.0")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar with NEM 3.0 + EV + Household, $)"], label="Solar + NEM 3.0")
 ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
