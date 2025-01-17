@@ -17,6 +17,8 @@ DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # Float, kWh/day
 DEFAULT_CONSUMPTION_FLUCTUATION = 0.2  # Float, 20%
 DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]  # Integer days per month
 CHARGING_POWER = 11.52  # Float, kW for 48A EVSE at 240V
+SUMMER_MONTHS = [5, 6, 7, 8]  # June to September
+WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]  # January to May and October to December
 
 # Helper Functions
 def calculate_monthly_values(daily_value):
@@ -43,16 +45,19 @@ def calculate_charging_time(daily_ev_demand, charging_power=CHARGING_POWER, char
     charging_time = net_energy / charging_power
     return charging_time
 
-def simulate_costs(household, solar, ev_demand, battery_capacity, rates, nem_plan):
-    """Simulate energy flows and costs (yearly and monthly) with NEM 2.0 and NEM 3.0 logic."""
+def simulate_costs(household, solar, ev_demand, battery_capacity, nem_plan):
+    """Simulate energy flows and costs (yearly and monthly) with automated seasonal TOU rates."""
     battery_state = 0
     grid_import = []
     grid_export = []
     monthly_cost = []
     total_cost = 0
-    export_rate = 0.10 if nem_plan == "NEM 3.0" else rates["off_peak"]
+    export_rate = 0.10 if nem_plan == "NEM 3.0" else TOU_RATES["summer"]["off_peak"]
 
     for month, days in enumerate(DAYS_IN_MONTH):
+        # Assign seasonal rates
+        rates = TOU_RATES["summer"] if month in SUMMER_MONTHS else TOU_RATES["winter"]
+
         monthly_import = 0
         monthly_export = 0
         monthly_total_cost = 0
@@ -131,8 +136,6 @@ with st.sidebar.expander("EV Parameters"):
 
 # Tab 2: Utility Rates
 with st.sidebar.expander("Utility Rates"):
-    tou_plan = st.radio("Time-of-Use Plan", ["Summer", "Winter"])
-    rates = TOU_RATES[tou_plan.lower()]
     nem_plan = st.radio("NEM Plan", ["NEM 2.0", "NEM 3.0"])
 
 # Tab 3: Household Consumption
@@ -150,7 +153,7 @@ with st.sidebar.expander("Solar Panel Production"):
 
 # Simulations
 results = simulate_costs(
-    household_yearly, sum(solar_monthly), ev_monthly, battery_capacity, rates, nem_plan
+    household_yearly, sum(solar_monthly), ev_monthly, battery_capacity, nem_plan
 )
 
 # Results Section
