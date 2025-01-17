@@ -166,17 +166,3 @@ ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar + EV + NEM 3.0, $
 ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
-
-# 4. Annual Summary (Bar Chart)
-st.write("#### Annual Cost Summary")
-annual_costs = {
-    "No Solar": sum(total_cost_no_solar),
-    "Solar + NEM 2.0": sum(total_cost_nem_2),
-    "Solar + NEM 3.0": sum(total_cost_nem_3),
-}
-fig, ax = plt.subplots()
-ax.bar(annual_costs.keys(), annual_costs.values(), color=["red", "blue", "green"])
-ax.set_ylabel("Total Annual Cost ($)")
-ax.set_title("Annual Cost Comparison")
-st.pyplot(fig)
-
