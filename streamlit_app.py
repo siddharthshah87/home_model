@@ -4,21 +4,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Constants
-DEFAULT_COMMUTE_MILES = 30  # Integer
-DEFAULT_EFFICIENCY = {"Model Y": 3.5, "Model 3": 4.0}  # Float values for efficiency
-DEFAULT_BATTERY_CAPACITY = 10  # Integer, kWh
-DEFAULT_BATTERY_EFFICIENCY = 0.9  # Float, 90%
-DEFAULT_SOLAR_SIZE = 7.5  # Float, kW
+DEFAULT_COMMUTE_MILES = 30
+DEFAULT_EFFICIENCY = {"Model Y": 3.5, "Model 3": 4.0}
+DEFAULT_BATTERY_CAPACITY = 10  # kWh
+DEFAULT_BATTERY_EFFICIENCY = 0.9  # 90%
+DEFAULT_SOLAR_SIZE = 7.5  # kW
 TOU_RATES = {
-    "summer": {"on_peak": 0.45, "off_peak": 0.25, "super_off_peak": 0.12},  # Floats
-    "winter": {"on_peak": 0.35, "off_peak": 0.20, "super_off_peak": 0.10},  # Floats
+    "summer": {"on_peak": 0.45, "off_peak": 0.25, "super_off_peak": 0.12},
+    "winter": {"on_peak": 0.35, "off_peak": 0.20, "super_off_peak": 0.10},
 }
-DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # Float, kWh/day
-DEFAULT_CONSUMPTION_FLUCTUATION = 0.2  # Float, 20%
-DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]  # Integer days per month
-CHARGING_POWER = 11.52  # Float, kW for 48A EVSE at 240V
+DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # kWh/day
+DEFAULT_CONSUMPTION_FLUCTUATION = 0.2  # 20%
+DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+CHARGING_POWER = 11.52  # kW for 48A EVSE at 240V
 SUMMER_MONTHS = [5, 6, 7, 8]  # June to September
-WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]  # January to May and October to December
+WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]  # January to May, October to December
 
 # Helper Functions
 def calculate_monthly_values(daily_value):
@@ -45,76 +45,49 @@ def calculate_charging_time(daily_ev_demand, charging_power=CHARGING_POWER, char
     charging_time = net_energy / charging_power
     return charging_time
 
-def simulate_costs(household, solar, ev_demand, battery_capacity, nem_plan):
-    """Simulate energy flows and costs (yearly and monthly) with automated seasonal TOU rates."""
-    battery_state = 0
-    grid_import = []
-    grid_export = []
-    monthly_cost = []
-    total_cost = 0
-    export_rate = 0.10 if nem_plan == "NEM 3.0" else TOU_RATES["summer"]["off_peak"]
+def calculate_monthly_ev_costs(ev_monthly, rates, solar_monthly, nem_plan, battery_capacity):
+    """Calculate monthly EV costs under various scenarios."""
+    ev_cost_nem_2 = []
+    ev_cost_no_solar = []
+    ev_cost_nem_3 = []
+    total_cost_per_month = []
 
-    for month, days in enumerate(DAYS_IN_MONTH):
+    for month in range(12):
         # Assign seasonal rates
-        rates = TOU_RATES["summer"] if month in SUMMER_MONTHS else TOU_RATES["winter"]
+        seasonal_rates = TOU_RATES["summer"] if month in SUMMER_MONTHS else TOU_RATES["winter"]
 
-        monthly_import = 0
-        monthly_export = 0
-        monthly_total_cost = 0
+        # EV cost with no solar (grid-only charging)
+        cost_no_solar = ev_monthly[month] * seasonal_rates["super_off_peak"]
+        ev_cost_no_solar.append(cost_no_solar)
 
-        for day in range(days):
-            daily_household = household / 365
-            daily_solar = solar / 365
-            daily_ev = ev_demand[month] / days
+        # EV cost under NEM 2.0
+        excess_solar = solar_monthly[month] - household_monthly[month]
+        credit = max(0, excess_solar * seasonal_rates["off_peak"])
+        cost_nem_2 = max(0, ev_monthly[month] - credit)
+        ev_cost_nem_2.append(cost_nem_2)
 
-            # Excess solar after household consumption
-            excess_solar = max(daily_solar - daily_household, 0)
+        # EV cost under NEM 3.0 (self-consumption priority)
+        battery_state = 0
+        if battery_capacity > 0:
+            charge = min(excess_solar, battery_capacity - battery_state)
+            battery_state += charge * DEFAULT_BATTERY_EFFICIENCY
+            excess_solar -= charge
 
-            # Battery logic
-            if battery_capacity > 0:
-                charge = min(excess_solar, battery_capacity - battery_state)
-                battery_state += charge * DEFAULT_BATTERY_EFFICIENCY
-                excess_solar -= charge
+        ev_shortfall = ev_monthly[month]
+        if battery_state > 0:
+            discharge = min(ev_shortfall, battery_state)
+            battery_state -= discharge
+            ev_shortfall -= discharge
 
-            # EV charging logic
-            ev_shortfall = daily_ev
-            if excess_solar > 0:
-                ev_direct_charge = min(ev_shortfall, excess_solar)
-                ev_shortfall -= ev_direct_charge
-                excess_solar -= ev_direct_charge
-            if ev_shortfall > 0 and battery_state > 0:
-                battery_discharge = min(ev_shortfall, battery_state)
-                ev_shortfall -= battery_discharge
-                battery_state -= battery_discharge
+        cost_nem_3 = ev_shortfall * seasonal_rates["super_off_peak"]
+        ev_cost_nem_3.append(cost_nem_3)
 
-            # Import remaining EV demand
-            if ev_shortfall > 0:
-                monthly_import += ev_shortfall
-                monthly_total_cost += ev_shortfall * rates["super_off_peak"]
+        # Total monthly cost
+        household_cost = household_monthly[month] * seasonal_rates["off_peak"]
+        total_cost = household_cost + cost_nem_3
+        total_cost_per_month.append(total_cost)
 
-            # Handle remaining solar
-            if excess_solar > 0:
-                if nem_plan == "NEM 2.0":
-                    monthly_export += excess_solar
-                elif nem_plan == "NEM 3.0":
-                    monthly_export += excess_solar
-
-        # Accumulate monthly results
-        grid_import.append(monthly_import)
-        grid_export.append(monthly_export)
-        monthly_cost.append(monthly_total_cost)
-        total_cost += monthly_total_cost
-
-    export_credits = sum(grid_export) * export_rate
-    net_cost = total_cost - export_credits
-
-    return {
-        "Yearly Cost ($)": net_cost,
-        "Monthly Cost ($)": monthly_cost,
-        "Grid Import (kWh)": grid_import,
-        "Grid Export (kWh)": grid_export,
-        "Export Credits ($)": export_credits,
-    }
+    return ev_cost_nem_2, ev_cost_no_solar, ev_cost_nem_3, total_cost_per_month
 
 # Streamlit App
 st.title("Energy Simulation Dashboard")
@@ -151,28 +124,27 @@ with st.sidebar.expander("Solar Panel Production"):
     battery_capacity = st.slider("Battery Capacity (kWh)", 0, 20, int(DEFAULT_BATTERY_CAPACITY), step=1)
     solar_yearly, solar_monthly = calculate_solar_production(solar_size)
 
-# Simulations
-results = simulate_costs(
-    household_yearly, sum(solar_monthly), ev_monthly, battery_capacity, nem_plan
+# Calculate Monthly EV Costs
+ev_cost_nem_2, ev_cost_no_solar, ev_cost_nem_3, total_cost_per_month = calculate_monthly_ev_costs(
+    ev_monthly, TOU_RATES, solar_monthly, nem_plan, battery_capacity
 )
+
+# Monthly Results
+monthly_data = pd.DataFrame({
+    "Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "EV Consumption (kWh)": ev_monthly,
+    "Household Consumption (kWh)": household_monthly,
+    "Solar Production (kWh)": solar_monthly,
+    "Household Monthly Bill ($)": [household_monthly[month] * (TOU_RATES["summer" if month in SUMMER_MONTHS else "winter"]["off_peak"]) for month in range(12)],
+    "EV Monthly Cost (NEM 2.0, $)": ev_cost_nem_2,
+    "EV Monthly Cost (No Solar, $)": ev_cost_no_solar,
+    "EV Monthly Cost (NEM 3.0, $)": ev_cost_nem_3,
+    "Total Monthly Cost ($)": total_cost_per_month,
+})
 
 # Results Section
 st.header("Simulation Results")
 
-# Yearly Results
-st.write("### Yearly Overview")
-st.write(f"**Total Yearly EV Energy Demand**: {ev_yearly:.2f} kWh")
-st.write(f"**Total Yearly Household Consumption**: {household_yearly:.2f} kWh")
-st.write(f"**Total Yearly Solar Production**: {solar_yearly:.2f} kWh")
-st.write(f"**Total Yearly Cost**: ${results['Yearly Cost ($)']:.2f}")
-
-# Monthly Results
-st.write("### Monthly Breakdown")
-monthly_data = pd.DataFrame({
-    "Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-    "EV Demand (kWh)": ev_monthly,
-    "Household Consumption (kWh)": household_monthly,
-    "Solar Production (kWh)": solar_monthly,
-    "Monthly Cost ($)": results["Monthly Cost ($)"],
-})
+# Display the table
+st.write("### Monthly Results Breakdown")
 st.table(monthly_data)
