@@ -129,7 +129,52 @@ monthly_data = pd.DataFrame({
     "Total Cost (Solar + EV + NEM 3.0, $)": total_cost_nem_3,
 })
 
-# Display Results
+# Results Section
 st.header("Simulation Results")
 st.write("### Monthly Results Breakdown")
 st.table(monthly_data)
+
+# Visualizations
+st.write("### Visualizations")
+
+# 1. Monthly Energy Flows
+st.write("#### Monthly Energy Flows")
+fig, ax = plt.subplots()
+ax.bar(monthly_data["Month"], monthly_data["EV Consumption (kWh)"], label="EV Consumption")
+ax.bar(monthly_data["Month"], monthly_data["Household Consumption (kWh)"], bottom=monthly_data["EV Consumption (kWh)"], label="Household Consumption")
+ax.plot(monthly_data["Month"], monthly_data["Solar Production (kWh)"], label="Solar Production", color="gold", marker="o")
+ax.set_ylabel("Energy (kWh)")
+ax.legend()
+st.pyplot(fig)
+
+# 2. EV Charging Costs
+st.write("#### EV Charging Costs Comparison")
+fig, ax = plt.subplots()
+ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (No Solar, $)"], label="No Solar")
+ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (NEM 2.0, $)"], label="NEM 2.0")
+ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (NEM 3.0, $)"], label="NEM 3.0")
+ax.set_ylabel("Cost ($)")
+ax.legend()
+st.pyplot(fig)
+
+# 3. Total Monthly Costs
+st.write("#### Total Monthly Costs")
+fig, ax = plt.subplots()
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (No Solar + EV, $)"], label="No Solar")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar + EV + NEM 2.0, $)"], label="Solar + NEM 2.0")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar + EV + NEM 3.0, $)"], label="Solar + NEM 3.0")
+ax.set_ylabel("Cost ($)")
+ax.legend()
+st.pyplot(fig)
+
+# 4. Annual Summary (Pie Chart)
+st.write("#### Annual Cost Summary")
+annual_costs = {
+    "No Solar": sum(total_cost_no_solar),
+    "Solar + NEM 2.0": sum(total_cost_nem_2),
+    "Solar + NEM 3.0": sum(total_cost_nem_3),
+}
+fig, ax = plt.subplots()
+ax.pie(annual_costs.values(), labels=annual_costs.keys(), autopct="%1.1f%%", startangle=90)
+ax.set_title("Annual Cost Distribution")
+st.pyplot(fig)
