@@ -16,7 +16,6 @@ TOU_RATES = {
 DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # kWh/day
 DEFAULT_CONSUMPTION_FLUCTUATION = 0.2  # 20%
 DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-CHARGING_POWER = 11.52  # kW for 48A EVSE at 240V
 SUMMER_MONTHS = [5, 6, 7, 8]  # June to September
 WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]  # January to May, October to December
 
@@ -36,13 +35,15 @@ def calculate_solar_production(size):
     monthly_production = calculate_monthly_values(size * 4)
     return yearly_production, monthly_production
 
-def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly, battery_capacity):
+def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly, battery_capacity, time_of_charging):
     ev_cost_no_solar = []
     ev_cost_nem_2 = []
-    ev_cost_nem_3 = []
+    nem_3_battery_costs = []
     total_cost_no_solar = []
     total_cost_nem_2 = []
     total_cost_nem_3 = []
+
+    battery_state = 0  # Start with an empty battery
 
     for month in range(12):
         rates = TOU_RATES["summer"] if month in SUMMER_MONTHS else TOU_RATES["winter"]
@@ -64,24 +65,42 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly, batter
         ev_cost_nem_2.append(ev_cost_under_nem_2)
         total_cost_nem_2.append(household_cost_no_solar - credit_nem_2 + ev_cost_under_nem_2)
 
-        # EV cost under NEM 3.0
-        battery_state = 0
-        if battery_capacity > 0:
-            charge = min(excess_solar, battery_capacity - battery_state)
-            battery_state += charge * DEFAULT_BATTERY_EFFICIENCY
-            excess_solar -= charge
+        # EV cost under NEM 3.0 + Battery
+        excess_solar = max(0, solar_monthly[month] - household_monthly[month])
 
+        # Daytime charging: Use direct solar, then battery, then grid at peak rates
+        # Nighttime charging: Use battery first, then grid at super off-peak rates
         ev_shortfall = ev_monthly[month]
-        if battery_state > 0:
-            discharge = min(ev_shortfall, battery_state)
-            battery_state -= discharge
-            ev_shortfall -= discharge
 
-        ev_cost_under_nem_3 = ev_shortfall * rates["super_off_peak"]
-        ev_cost_nem_3.append(ev_cost_under_nem_3)
-        total_cost_nem_3.append(household_cost_no_solar + ev_cost_under_nem_3)
+        if time_of_charging == "Daytime (Peak)" and excess_solar > 0:
+            direct_solar_used = min(ev_shortfall, excess_solar)
+            ev_shortfall -= direct_solar_used
+            excess_solar -= direct_solar_used
 
-    return ev_cost_no_solar, ev_cost_nem_2, ev_cost_nem_3, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3
+        # Charge battery with remaining solar
+        if excess_solar > 0 and battery_state < battery_capacity:
+            battery_charge = min(excess_solar, battery_capacity - battery_state)
+            battery_state += battery_charge * DEFAULT_BATTERY_EFFICIENCY
+            excess_solar -= battery_charge
+
+        # Discharge battery to meet EV demand
+        if ev_shortfall > 0 and battery_state > 0:
+            battery_discharge = min(ev_shortfall, battery_state)
+            ev_shortfall -= battery_discharge
+            battery_state -= battery_discharge
+
+        # Remaining EV demand is met by the grid
+        if time_of_charging == "Night (Super Off-Peak)":
+            grid_energy_used = ev_shortfall
+            nem_3_cost = grid_energy_used * rates["super_off_peak"]
+        elif time_of_charging == "Daytime (Peak)":
+            grid_energy_used = ev_shortfall
+            nem_3_cost = grid_energy_used * rates["on_peak"]
+
+        nem_3_battery_costs.append(nem_3_cost)
+        total_cost_nem_3.append(household_cost_no_solar + nem_3_cost)
+
+    return ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3
 
 # Streamlit App
 st.title("Energy Simulation Dashboard")
@@ -95,6 +114,11 @@ with st.sidebar.expander("EV Parameters"):
     ev_model = st.selectbox("EV Model", list(DEFAULT_EFFICIENCY.keys()))
     efficiency = DEFAULT_EFFICIENCY[ev_model]
     charging_days = st.radio("Charging Frequency", ["Daily", "Weekdays Only"])
+    time_of_charging = st.radio(
+        "Time of Charging",
+        ["Night (Super Off-Peak)", "Daytime (Peak)"],
+        index=0,
+    )
     ev_yearly, ev_monthly = calculate_ev_demand(commute_miles, efficiency, 5 if charging_days == "Weekdays Only" else 7)
 
 # Household Consumption
@@ -111,8 +135,8 @@ with st.sidebar.expander("Solar Panel Production"):
     solar_yearly, solar_monthly = calculate_solar_production(solar_size)
 
 # Calculate Monthly Costs
-ev_cost_no_solar, ev_cost_nem_2, ev_cost_nem_3, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3 = calculate_monthly_costs(
-    ev_monthly, solar_monthly, household_monthly, battery_capacity
+ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3 = calculate_monthly_costs(
+    ev_monthly, solar_monthly, household_monthly, battery_capacity, time_of_charging
 )
 
 # Monthly Results
@@ -124,10 +148,10 @@ monthly_data = pd.DataFrame({
     "Solar Production (kWh)": solar_monthly,
     "EV Charging Cost (No Solar, $)": ev_cost_no_solar,
     "EV Charging Cost (Solar with NEM 2.0, $)": ev_cost_nem_2,
-    "EV Charging Cost (Solar with NEM 3.0, $)": ev_cost_nem_3,
+    "EV Charging Cost (Solar with NEM 3.0 + Battery, $)": nem_3_battery_costs,
     "Total Cost (No Solar, EV + Household, $)": total_cost_no_solar,
     "Total Cost (Solar with NEM 2.0 + EV + Household, $)": total_cost_nem_2,
-    "Total Cost (Solar with NEM 3.0 + EV + Household, $)": total_cost_nem_3,
+    "Total Cost (Solar with NEM 3.0 + Battery + EV + Household, $)": total_cost_nem_3,
 })
 
 # Results Section
@@ -161,7 +185,7 @@ st.write("#### EV Charging Costs")
 fig, ax = plt.subplots()
 ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (No Solar, $)"], label="No Solar")
 ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (Solar with NEM 2.0, $)"], label="NEM 2.0")
-ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (Solar with NEM 3.0, $)"], label="NEM 3.0")
+ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (Solar with NEM 3.0 + Battery, $)"], label="NEM 3.0 + Battery")
 ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
@@ -171,7 +195,7 @@ st.write("#### Total Monthly Costs")
 fig, ax = plt.subplots()
 ax.plot(monthly_data["Month"], monthly_data["Total Cost (No Solar, EV + Household, $)"], label="No Solar")
 ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar with NEM 2.0 + EV + Household, $)"], label="Solar + NEM 2.0")
-ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar with NEM 3.0 + EV + Household, $)"], label="Solar + NEM 3.0")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (Solar with NEM 3.0 + Battery + EV + Household, $)"], label="Solar + NEM 3.0 + Battery")
 ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
