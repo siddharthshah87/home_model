@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 # Constants
 DEFAULT_COMMUTE_MILES = 30
@@ -21,11 +22,9 @@ WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]  # January to May, October to Decembe
 
 # Helper Functions
 def calculate_monthly_values(daily_value):
-    """Distribute daily value into monthly totals."""
     return [daily_value * days for days in DAYS_IN_MONTH]
 
 def calculate_ev_demand(miles, efficiency, days_per_week=7):
-    """Calculate annual EV energy demand and monthly breakdown."""
     daily_demand = miles / efficiency
     total_days = days_per_week * 52
     yearly_demand = daily_demand * total_days
@@ -33,26 +32,17 @@ def calculate_ev_demand(miles, efficiency, days_per_week=7):
     return yearly_demand, monthly_demand
 
 def calculate_solar_production(size):
-    """Simulate yearly and monthly solar energy production."""
     yearly_production = size * 4 * 365  # Assume 4 kWh/day per kW system
     monthly_production = calculate_monthly_values(size * 4)
     return yearly_production, monthly_production
 
-def calculate_charging_time(daily_ev_demand, charging_power=CHARGING_POWER, charging_efficiency=0.9):
-    """Calculate time required to charge the EV daily."""
-    net_energy = daily_ev_demand / charging_efficiency
-    charging_time = net_energy / charging_power
-    return charging_time
-
-def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly, nem_plan, battery_capacity):
-    """Calculate monthly costs under various scenarios."""
-    ev_cost_no_solar = []  # EV cost with no solar
-    total_cost_no_solar = []  # Total cost without solar
-    total_cost_nem_2 = []  # Total cost with solar under NEM 2.0
-    total_cost_nem_3 = []  # Total cost with solar under NEM 3.0
+def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly, battery_capacity):
+    ev_cost_no_solar = []
+    total_cost_no_solar = []
+    total_cost_nem_2 = []
+    total_cost_nem_3 = []
 
     for month in range(12):
-        # Assign seasonal rates
         rates = TOU_RATES["summer"] if month in SUMMER_MONTHS else TOU_RATES["winter"]
 
         # Household costs (no solar)
@@ -102,23 +92,15 @@ with st.sidebar.expander("EV Parameters"):
     efficiency = DEFAULT_EFFICIENCY[ev_model]
     charging_days = st.radio("Charging Frequency", ["Daily", "Weekdays Only"])
     ev_yearly, ev_monthly = calculate_ev_demand(commute_miles, efficiency, 5 if charging_days == "Weekdays Only" else 7)
-    charging_time = calculate_charging_time(ev_yearly / 365)
 
-    st.write(f"**Daily EV Energy Demand**: {ev_yearly / 365:.2f} kWh")
-    st.write(f"**Time to Charge (at 48A, 240V)**: {charging_time:.2f} hours")
-
-# Tab 2: Utility Rates
-with st.sidebar.expander("Utility Rates"):
-    nem_plan = st.radio("NEM Plan", ["NEM 2.0", "NEM 3.0"])
-
-# Tab 3: Household Consumption
+# Tab 2: Household Consumption
 with st.sidebar.expander("Household Consumption"):
     household_consumption = st.slider("Average Daily Consumption (kWh)", 10, 50, int(DEFAULT_HOUSEHOLD_CONSUMPTION), step=1)
     fluctuation = st.slider("Consumption Fluctuation (%)", 0, 50, int(DEFAULT_CONSUMPTION_FLUCTUATION * 100), step=1) / 100
     household_yearly = household_consumption * (1 + fluctuation) * 365
     household_monthly = calculate_monthly_values(household_consumption * (1 + fluctuation))
 
-# Tab 4: Solar Panel Production
+# Tab 3: Solar Panel Production
 with st.sidebar.expander("Solar Panel Production"):
     solar_size = st.slider("Solar System Size (kW)", 3, 15, int(DEFAULT_SOLAR_SIZE), step=1)
     battery_capacity = st.slider("Battery Capacity (kWh)", 0, 20, int(DEFAULT_BATTERY_CAPACITY), step=1)
@@ -126,7 +108,7 @@ with st.sidebar.expander("Solar Panel Production"):
 
 # Calculate Monthly Costs
 ev_cost_no_solar, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3 = calculate_monthly_costs(
-    ev_monthly, solar_monthly, household_monthly, nem_plan, battery_capacity
+    ev_monthly, solar_monthly, household_monthly, battery_capacity
 )
 
 # Monthly Results
@@ -143,7 +125,16 @@ monthly_data = pd.DataFrame({
 
 # Results Section
 st.header("Simulation Results")
-
-# Display the table
 st.write("### Monthly Results Breakdown")
 st.table(monthly_data)
+
+# Add Visualization
+st.write("### Cost Comparison")
+fig, ax = plt.subplots()
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (No Solar, $)"], label="No Solar")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (NEM 2.0, $)"], label="NEM 2.0")
+ax.plot(monthly_data["Month"], monthly_data["Total Cost (NEM 3.0, $)"], label="NEM 3.0")
+ax.legend()
+plt.ylabel("Cost ($)")
+plt.title("Monthly Cost Comparison")
+st.pyplot(fig)
