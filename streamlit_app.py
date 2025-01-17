@@ -4,19 +4,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Constants
-DEFAULT_COMMUTE_MILES = 30
-DEFAULT_EFFICIENCY = {"Model Y": 3.5, "Model 3": 4.0}
-DEFAULT_BATTERY_CAPACITY = 10  # kWh
-DEFAULT_BATTERY_EFFICIENCY = 0.9  # 90%
-DEFAULT_SOLAR_SIZE = 7.5  # kW
+DEFAULT_COMMUTE_MILES = 30  # Integer
+DEFAULT_EFFICIENCY = {"Model Y": 3.5, "Model 3": 4.0}  # Float values for efficiency
+DEFAULT_BATTERY_CAPACITY = 10  # Integer, kWh
+DEFAULT_BATTERY_EFFICIENCY = 0.9  # Float, 90%
+DEFAULT_SOLAR_SIZE = 7.5  # Float, kW
 TOU_RATES = {
-    "summer": {"on_peak": 0.45, "off_peak": 0.25, "super_off_peak": 0.12},
-    "winter": {"on_peak": 0.35, "off_peak": 0.20, "super_off_peak": 0.10},
+    "summer": {"on_peak": 0.45, "off_peak": 0.25, "super_off_peak": 0.12},  # Floats
+    "winter": {"on_peak": 0.35, "off_peak": 0.20, "super_off_peak": 0.10},  # Floats
 }
-DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # kWh/day
-DEFAULT_CONSUMPTION_FLUCTUATION = 0.2
-DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-CHARGING_POWER = 11.52  # kW for 48A EVSE at 240V
+DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # Float, kWh/day
+DEFAULT_CONSUMPTION_FLUCTUATION = 0.2  # Float, 20%
+DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]  # Integer days per month
+CHARGING_POWER = 11.52  # Float, kW for 48A EVSE at 240V
 
 # Helper Functions
 def calculate_monthly_values(daily_value):
@@ -38,9 +38,7 @@ def calculate_solar_production(size):
     return yearly_production, monthly_production
 
 def calculate_charging_time(daily_ev_demand, charging_power=CHARGING_POWER, charging_efficiency=0.9):
-    """
-    Calculate time required to charge the EV daily.
-    """
+    """Calculate time required to charge the EV daily."""
     net_energy = daily_ev_demand / charging_efficiency
     charging_time = net_energy / charging_power
     return charging_time
@@ -121,7 +119,7 @@ st.sidebar.header("Simulation Parameters")
 
 # Tab 1: EV Parameters
 with st.sidebar.expander("EV Parameters"):
-    commute_miles = st.slider("Daily Commute Distance (miles)", 10, 100, DEFAULT_COMMUTE_MILES, step=1)
+    commute_miles = st.slider("Daily Commute Distance (miles)", 10, 100, int(DEFAULT_COMMUTE_MILES), step=1)
     ev_model = st.selectbox("EV Model", list(DEFAULT_EFFICIENCY.keys()))
     efficiency = DEFAULT_EFFICIENCY[ev_model]
     charging_days = st.radio("Charging Frequency", ["Daily", "Weekdays Only"])
@@ -139,15 +137,15 @@ with st.sidebar.expander("Utility Rates"):
 
 # Tab 3: Household Consumption
 with st.sidebar.expander("Household Consumption"):
-    household_consumption = st.slider("Average Daily Consumption (kWh)", 10, 50, DEFAULT_HOUSEHOLD_CONSUMPTION, step=1)
-    fluctuation = st.slider("Consumption Fluctuation (%)", 0, 50, int(DEFAULT_CONSUMPTION_FLUCTUATION * 100)) / 100
+    household_consumption = st.slider("Average Daily Consumption (kWh)", 10, 50, int(DEFAULT_HOUSEHOLD_CONSUMPTION), step=1)
+    fluctuation = st.slider("Consumption Fluctuation (%)", 0, 50, int(DEFAULT_CONSUMPTION_FLUCTUATION * 100), step=1) / 100
     household_yearly = household_consumption * (1 + fluctuation) * 365
     household_monthly = calculate_monthly_values(household_consumption * (1 + fluctuation))
 
 # Tab 4: Solar Panel Production
 with st.sidebar.expander("Solar Panel Production"):
-    solar_size = st.slider("Solar System Size (kW)", 3, 15, DEFAULT_SOLAR_SIZE, step=1)
-    battery_capacity = st.slider("Battery Capacity (kWh)", 0, 20, DEFAULT_BATTERY_CAPACITY)
+    solar_size = st.slider("Solar System Size (kW)", 3, 15, int(DEFAULT_SOLAR_SIZE), step=1)
+    battery_capacity = st.slider("Battery Capacity (kWh)", 0, 20, int(DEFAULT_BATTERY_CAPACITY), step=1)
     solar_yearly, solar_monthly = calculate_solar_production(solar_size)
 
 # Simulations
