@@ -13,13 +13,14 @@ DEFAULT_BATTERY_EFFICIENCY = 0.9  # 90% efficiency
 
 # Core function to calculate monthly costs
 def calculate_monthly_costs_updated(solar, household, ev, battery_capacity, charging_time):
-    """Updated monthly cost calculation logic."""
+    """Updated monthly cost calculation logic with detailed battery usage breakdown."""
     ev_cost_no_solar = []
     ev_cost_nem_2 = []
     nem_3_battery_costs = []
     total_cost_no_solar = []
     total_cost_nem_2 = []
     total_cost_nem_3 = []
+    battery_usage = []  # Track how much energy is supplied by the battery
 
     battery_state = 0  # Start with an empty battery
 
@@ -59,11 +60,15 @@ def calculate_monthly_costs_updated(solar, household, ev, battery_capacity, char
 
         # Discharge battery to meet EV demand (Nighttime or later charging priority)
         ev_shortfall = ev
+        battery_contribution = 0
 
         if battery_state > 0:
             battery_discharge = min(ev_shortfall, battery_state)
             ev_shortfall -= battery_discharge
             battery_state -= battery_discharge
+            battery_contribution += battery_discharge
+
+        battery_usage.append(battery_contribution)
 
         # Remaining EV demand is met by the grid
         if charging_time == "Night (Super Off-Peak)":
@@ -76,7 +81,7 @@ def calculate_monthly_costs_updated(solar, household, ev, battery_capacity, char
         nem_3_battery_costs.append(nem_3_cost)
         total_cost_nem_3.append(household_cost_no_solar + nem_3_cost)
 
-    return ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3
+    return ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3, battery_usage
 
 # Define simulation parameters for visualizations
 def simulate_scenarios():
@@ -89,7 +94,7 @@ def simulate_scenarios():
     results = []
 
     for scenario in scenarios:
-        ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3 = calculate_monthly_costs_updated(
+        ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3, battery_usage = calculate_monthly_costs_updated(
             scenario["solar"],
             scenario["household"],
             scenario["ev"],
@@ -104,46 +109,10 @@ def simulate_scenarios():
             "Total Cost (No Solar)": sum(total_cost_no_solar),
             "Total Cost (NEM 2.0)": sum(total_cost_nem_2),
             "Total Cost (NEM 3.0 + Battery)": sum(total_cost_nem_3),
+            "Battery Contribution (kWh)": sum(battery_usage),
         })
 
     return results
-
-# Interactive parameters adjustment
-def interactive_simulation():
-    st.sidebar.header("Adjust Simulation Parameters")
-
-    solar = st.sidebar.slider("Solar Production (kWh per month)", 0, 1500, 1000, 50)
-    household = st.sidebar.slider("Household Consumption (kWh per month)", 0, 1000, 400, 50)
-    ev = st.sidebar.slider("EV Consumption (kWh per month)", 0, 500, 100, 10)
-    battery_capacity = st.sidebar.slider("Battery Capacity (kWh)", 0, 20, 10, 1)
-    charging_time = st.sidebar.radio("EV Charging Time", ["Night (Super Off-Peak)", "Daytime (Peak)"])
-
-    ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3 = calculate_monthly_costs_updated(
-        solar, household, ev, battery_capacity, charging_time
-    )
-
-    st.header("Live Simulation Results")
-    results_df = pd.DataFrame({
-        "Metric": ["EV Cost (No Solar)", "EV Cost (NEM 2.0)", "EV Cost (NEM 3.0 + Battery)", "Total Cost (No Solar)", "Total Cost (NEM 2.0)", "Total Cost (NEM 3.0 + Battery)"],
-        "Monthly Cost ($)": [
-            sum(ev_cost_no_solar) / 12,
-            sum(ev_cost_nem_2) / 12,
-            sum(nem_3_battery_costs) / 12,
-            sum(total_cost_no_solar) / 12,
-            sum(total_cost_nem_2) / 12,
-            sum(total_cost_nem_3) / 12,
-        ],
-        "Yearly Cost ($)": [
-            sum(ev_cost_no_solar),
-            sum(ev_cost_nem_2),
-            sum(nem_3_battery_costs),
-            sum(total_cost_no_solar),
-            sum(total_cost_nem_2),
-            sum(total_cost_nem_3),
-        ],
-    })
-
-    st.table(results_df)
 
 # Visualization and analysis
 def create_visualizations(results):
@@ -154,7 +123,42 @@ def create_visualizations(results):
 
     # Tab 1: Interactive Simulation
     with tabs[0]:
-        interactive_simulation()
+        st.sidebar.header("Adjust Simulation Parameters")
+
+        solar = st.sidebar.slider("Solar Production (kWh per month)", 0, 1500, 1000, 50)
+        household = st.sidebar.slider("Household Consumption (kWh per month)", 0, 1000, 400, 50)
+        ev = st.sidebar.slider("EV Consumption (kWh per month)", 0, 500, 100, 10)
+        battery_capacity = st.sidebar.slider("Battery Capacity (kWh)", 0, 20, 10, 1)
+        charging_time = st.sidebar.radio("EV Charging Time", ["Night (Super Off-Peak)", "Daytime (Peak)"])
+
+        ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3, battery_usage = calculate_monthly_costs_updated(
+            solar, household, ev, battery_capacity, charging_time
+        )
+
+        st.header("Live Simulation Results")
+        results_df = pd.DataFrame({
+            "Metric": ["EV Cost (No Solar)", "EV Cost (NEM 2.0)", "EV Cost (NEM 3.0 + Battery)", "Total Cost (No Solar)", "Total Cost (NEM 2.0)", "Total Cost (NEM 3.0 + Battery)", "Battery Contribution (kWh)"],
+            "Monthly Value": [
+                sum(ev_cost_no_solar) / 12,
+                sum(ev_cost_nem_2) / 12,
+                sum(nem_3_battery_costs) / 12,
+                sum(total_cost_no_solar) / 12,
+                sum(total_cost_nem_2) / 12,
+                sum(total_cost_nem_3) / 12,
+                sum(battery_usage) / 12,
+            ],
+            "Yearly Value": [
+                sum(ev_cost_no_solar),
+                sum(ev_cost_nem_2),
+                sum(nem_3_battery_costs),
+                sum(total_cost_no_solar),
+                sum(total_cost_nem_2),
+                sum(total_cost_nem_3),
+                sum(battery_usage),
+            ],
+        })
+
+        st.table(results_df)
 
     # Tab 2: Predefined Scenarios
     with tabs[1]:
@@ -168,14 +172,15 @@ def create_visualizations(results):
 
             st.write("**Results Summary:**")
             summary_df = pd.DataFrame({
-                "Metric": ["EV Cost (No Solar)", "EV Cost (NEM 2.0)", "EV Cost (NEM 3.0 + Battery)", "Total Cost (No Solar)", "Total Cost (NEM 2.0)", "Total Cost (NEM 3.0 + Battery)"],
-                "Cost ($)": [
+                "Metric": ["EV Cost (No Solar)", "EV Cost (NEM 2.0)", "EV Cost (NEM 3.0 + Battery)", "Total Cost (No Solar)", "Total Cost (NEM 2.0)", "Total Cost (NEM 3.0 + Battery)", "Battery Contribution (kWh)"],
+                "Value": [
                     result["EV Cost (No Solar)"],
                     result["EV Cost (NEM 2.0)"],
                     result["EV Cost (NEM 3.0 + Battery)"],
                     result["Total Cost (No Solar)"],
                     result["Total Cost (NEM 2.0)"],
-                    result["Total Cost (NEM 3.0 + Battery)"]
+                    result["Total Cost (NEM 3.0 + Battery)"],
+                    result["Battery Contribution (kWh)"],
                 ]
             })
             st.table(summary_df)
@@ -192,7 +197,7 @@ def create_visualizations(results):
         st.dataframe(comparison_df)
 
         # Visualization for comparison
-        st.write("### Cost Comparison Across Scenarios")
+        st.write("### Cost and Battery Contribution Comparison")
         fig, ax = plt.subplots()
         metrics = ["EV Cost (No Solar)", "EV Cost (NEM 2.0)", "EV Cost (NEM 3.0 + Battery)", "Total Cost (No Solar)", "Total Cost (NEM 2.0)", "Total Cost (NEM 3.0 + Battery)"]
         for metric in metrics:
