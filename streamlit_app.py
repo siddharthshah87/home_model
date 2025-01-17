@@ -167,7 +167,7 @@ ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
 
-# 4. Annual Summary (Pie Chart)
+# 4. Annual Summary (Bar Chart)
 st.write("#### Annual Cost Summary")
 annual_costs = {
     "No Solar": sum(total_cost_no_solar),
@@ -175,6 +175,8 @@ annual_costs = {
     "Solar + NEM 3.0": sum(total_cost_nem_3),
 }
 fig, ax = plt.subplots()
-ax.pie(annual_costs.values(), labels=annual_costs.keys(), autopct="%1.1f%%", startangle=90)
-ax.set_title("Annual Cost Distribution")
+ax.bar(annual_costs.keys(), annual_costs.values(), color=["red", "blue", "green"])
+ax.set_ylabel("Total Annual Cost ($)")
+ax.set_title("Annual Cost Comparison")
 st.pyplot(fig)
+
