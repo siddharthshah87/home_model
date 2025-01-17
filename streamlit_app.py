@@ -4,10 +4,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # --------------------------------------------------------------------------------
-#                                GLOBAL CONSTANTS
+#                          GLOBAL CONSTANTS
 # --------------------------------------------------------------------------------
 
-# ~~~~~~~~~~~ Monthly Model Constants ~~~~~~~~~~~
+# ~~~~~~~~~ MONTHLY MODEL CONSTANTS ~~~~~~~~~
 DEFAULT_COMMUTE_MILES = 30
 DEFAULT_EFFICIENCY = {"Model Y": 3.5, "Model 3": 4.0}
 DEFAULT_BATTERY_CAPACITY = 10  # kWh
@@ -23,9 +23,9 @@ DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 SUMMER_MONTHS = [5, 6, 7, 8]
 WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]
 
-# ~~~~~~~~~~~ Basic Hourly Model Constants ~~~~~~~~~~~
+# ~~~~~~~~~ BASIC HOURLY MODEL CONSTANTS ~~~~~~~~~
 HOUR_TOU_SCHEDULE_BASIC = {
-    "on_peak_hours": list(range(16, 21)),       # 4 PM - 8 PM
+    "on_peak_hours": list(range(16, 21)),        # 4 PM - 8 PM
     "off_peak_hours": list(range(7, 16)) + [21, 22],  # 7 AM - 3 PM, 9 PM - 10 PM
     "super_off_peak_hours": list(range(0, 7)) + [23], # 0 AM - 6 AM, 11 PM
 }
@@ -35,11 +35,10 @@ HOUR_TOU_RATES_BASIC = {
     "super_off_peak": 0.12
 }
 BATTERY_HOURLY_EFFICIENCY_BASIC = 0.90
-DAYS_PER_YEAR = 365
 
-# ~~~~~~~~~~~ Advanced Hourly "NEM 3.0-like" Model Constants ~~~~~~~~~~~
+# ~~~~~~~~~ ADVANCED HOURLY "NEM 3.0-LIKE" CONSTANTS ~~~~~~~~~
 ADV_TOU_SCHEDULE = {
-    "on_peak_hours": list(range(16, 21)),       # 4-8 PM
+    "on_peak_hours": list(range(16, 21)),       
     "off_peak_hours": list(range(7, 16)) + [21, 22],
     "super_off_peak_hours": list(range(0, 7)) + [23],
 }
@@ -48,13 +47,33 @@ IMPORT_RATES = {
     "off_peak": 0.25,
     "super_off_peak": 0.12
 }
-# Export rates (much lower in NEM 3.0)
 EXPORT_RATES = {
     "on_peak": 0.10,
     "off_peak": 0.06,
     "super_off_peak": 0.04
 }
 ADV_BATTERY_EFFICIENCY = 0.90
+
+DAYS_PER_YEAR = 365
+
+# --------------------------------------------------------------------------------
+#                  COMMON / SEASONAL HELPER FUNCTIONS
+# --------------------------------------------------------------------------------
+
+def build_daily_array_seasonal(base_daily_value, monthly_factors):
+    """
+    Create a 365-element array of daily values with
+    per-month scaling factors.
+      - base_daily_value: baseline daily usage/production
+      - monthly_factors: list of length 12 for each month
+    """
+    daily_values = []
+    for month_idx, ndays in enumerate(DAYS_IN_MONTH):
+        factor = monthly_factors[month_idx]
+        for _ in range(ndays):
+            daily_values.append(base_daily_value * factor)
+    # Trim/ensure length is exactly 365
+    return np.array(daily_values[:365])
 
 # --------------------------------------------------------------------------------
 #                           MONTHLY MODEL FUNCTIONS
@@ -104,7 +123,6 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly,
             rates = TOU_RATES["winter"]
 
         # 1) No Solar
-        # House = off_peak; EV = super_off_peak
         cost_house_ns = household_monthly[month] * rates["off_peak"]
         cost_ev_ns = ev_monthly[month] * rates["super_off_peak"]
         ev_cost_no_solar.append(cost_ev_ns)
@@ -119,14 +137,9 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly,
         total_nem_2.append(cost_house_ns - credit_nem2 + cost_ev_nem2)
 
         # 3) NEM 3.0 + battery (naive monthly approach)
-        # leftover solar -> battery
-        # battery discharges for EV if time_of_charging=Daytime
-        # remainder from grid at either super_off_peak or on_peak
-        # (very simplified)
         leftover_solar = max(0, solar_monthly[month] - household_monthly[month])
         ev_shortfall = ev_monthly[month]
 
-        # Direct daytime usage
         if time_of_charging == "Daytime (Peak)" and leftover_solar > 0:
             direct_solar = min(ev_shortfall, leftover_solar)
             ev_shortfall -= direct_solar
@@ -156,7 +169,7 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly,
     return ev_cost_no_solar, ev_cost_nem_2, ev_cost_nem_3, total_no_solar, total_nem_2, total_nem_3
 
 # --------------------------------------------------------------------------------
-#                       BASIC HOURLY MODEL FUNCTIONS
+#                  BASIC HOURLY MODEL FUNCTIONS
 # --------------------------------------------------------------------------------
 
 def classify_tou_basic(hour_of_day):
@@ -177,7 +190,6 @@ def simulate_hour_basic(hour_idx, solar_kwh, house_kwh, ev_kwh, battery_state, b
     5) single set of TOU rates for cost
     6) no net export compensation
     """
-    day = hour_idx // 24
     hour_of_day = hour_idx % 24
     period = classify_tou_basic(hour_of_day)
     rate = HOUR_TOU_RATES_BASIC[period]
@@ -226,7 +238,7 @@ def run_basic_hourly_sim(
     Basic hourly simulation for a year, naive battery usage, 
     no net export compensation, single import rates.
     """
-    # 24-hour shapes
+    # 24-hour shapes for distributing daily usage
     house_shape = np.array([
         0.02, 0.02, 0.02, 0.02, 0.02, 0.03, 0.04, 0.06,
         0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.06, 0.07,
@@ -274,6 +286,7 @@ def run_basic_hourly_sim(
         "solar_unused": []
     }
 
+    # Loop over 365 days
     for d in range(DAYS_PER_YEAR):
         if reset_battery_daily:
             battery_state = 0.0
@@ -314,7 +327,7 @@ def run_basic_hourly_sim(
     return total_cost, total_grid, total_solar_unused, df
 
 # --------------------------------------------------------------------------------
-#                ADVANCED HOURLY "NEM 3.0-LIKE" MODEL FUNCTIONS
+#             ADVANCED HOURLY "NEM 3.0-LIKE" MODEL FUNCTIONS
 # --------------------------------------------------------------------------------
 
 def classify_tou_adv(hour_of_day):
@@ -332,20 +345,13 @@ def any_future_on_peak(day, hour):
             return True
     return False
 
-def advanced_battery_dispatch(
-    hour_idx,
-    solar_kwh,
-    house_kwh,
-    ev_kwh,
-    battery_state,
-    battery_capacity
-):
+def advanced_battery_dispatch(hour_idx, solar_kwh, house_kwh, ev_kwh, battery_state, battery_capacity):
     """
     1) use solar to meet load
     2) leftover -> battery
     3) if still leftover, export
-    4) discharge battery if on-peak, or if no future on-peak hours remain
-    5) import remainder
+    4) discharge battery if on-peak or if no future on-peak remains
+    5) remainder from grid
     6) track export credit
     """
     day = hour_idx // 24
@@ -373,7 +379,8 @@ def advanced_battery_dispatch(
             can_store = min(leftover_solar, space_needed)
             battery_state += can_store * ADV_BATTERY_EFFICIENCY
             leftover_solar -= can_store
-        # 3) if still leftover, export
+
+        # 3) leftover solar is exported
         if leftover_solar > 0:
             export_kwh = leftover_solar
             leftover_solar = 0
@@ -382,12 +389,10 @@ def advanced_battery_dispatch(
     on_peak = (hour_of_day in ADV_TOU_SCHEDULE["on_peak_hours"])
     if total_demand > 0 and battery_state > 0:
         if on_peak:
-            # definitely discharge
             discharge = min(total_demand, battery_state)
             total_demand -= discharge
             battery_state -= discharge
         else:
-            # only discharge if no more on-peak hours remain
             if not any_future_on_peak(day, hour_of_day):
                 discharge = min(total_demand, battery_state)
                 total_demand -= discharge
@@ -416,6 +421,7 @@ def run_advanced_hourly_sim(
     saving battery for on-peak.
     Returns (total_net_cost, df_hourly).
     """
+    # 24-hour shapes
     house_shape = np.array([
         0.02, 0.02, 0.02, 0.02, 0.02, 0.03, 0.04, 0.06,
         0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.06, 0.07,
@@ -504,46 +510,61 @@ def run_advanced_hourly_sim(
     return net_cost, df
 
 # --------------------------------------------------------------------------------
-#                              STREAMLIT APP
+#                             STREAMLIT APP
 # --------------------------------------------------------------------------------
 
 def main():
-    st.title("Unified App: Monthly vs. Basic Hourly vs. Advanced Hourly (NEM 3.0-like)")
+    st.title("All-in-One: Monthly vs Basic Hourly vs Advanced Hourly (NEM 3.0) + Seasonality")
 
     st.write("""
-    This app contains **three separate approaches** to modeling solar + battery + EV:
-    1. **Monthly Net Approach** (simplified NEM2 vs. NEM3),
-    2. **Basic Hourly Approach** (no net export credit, naive battery usage),
-    3. **Advanced Hourly 'NEM 3.0-like'** (separate import/export rates, store battery for on-peak).
+    This single app demonstrates three distinct models, plus **optional seasonal variation** 
+    for the **hourly** approaches.  
+    - **Monthly** approach: Simple net-metering logic (NEM 2 vs NEM 3 naive).
+    - **Basic Hourly**: Single import TOU rates, naive battery usage, no export credit.
+    - **Advanced Hourly (NEM 3.0-like)**: Separate import/export rates, battery saved for on-peak.
+    - **Seasonality** for hourly: Each month can scale daily solar/house usage with monthly factors.
     """)
 
-    # ---------- SIDEBAR: COMMON INPUTS ----------
+    # ~~~~~ SIDEBAR ~~~~~
     st.sidebar.header("Common Inputs")
 
+    # EV
     commute_miles = st.sidebar.slider("Daily Commute (miles)", 10, 100, DEFAULT_COMMUTE_MILES)
     ev_model = st.sidebar.selectbox("EV Model", list(DEFAULT_EFFICIENCY.keys()))
     efficiency = DEFAULT_EFFICIENCY[ev_model]
     charging_days_option = st.sidebar.radio("EV Charging Frequency", ["Daily", "Weekdays Only"])
     days_per_week = 5 if charging_days_option == "Weekdays Only" else 7
 
-    # The monthly model needs "Time of Charging" for the battery logic
-    monthly_charging_time = st.sidebar.radio("EV Charging Time (Monthly)", ["Night (Super Off-Peak)", "Daytime (Peak)"])
+    # For monthly model's battery logic
+    monthly_charging_time = st.sidebar.radio("EV Charging Time (Monthly)", 
+                                             ["Night (Super Off-Peak)", "Daytime (Peak)"])
 
     # Household
     household_consumption = st.sidebar.slider("Avg Household (kWh/day)", 10, 50, int(DEFAULT_HOUSEHOLD_CONSUMPTION))
-    fluctuation = st.sidebar.slider("Consumption Fluctuation (%)", 0, 50, int(DEFAULT_CONSUMPTION_FLUCTUATION*100)) / 100
+    fluctuation = st.sidebar.slider("Consumption Fluctuation (%)", 0, 50, 
+                                    int(DEFAULT_CONSUMPTION_FLUCTUATION*100)) / 100
 
     # Solar & Battery
     solar_size = st.sidebar.slider("Solar Size (kW)", 3, 15, int(DEFAULT_SOLAR_SIZE))
     battery_capacity = st.sidebar.slider("Battery Capacity (kWh)", 0, 20, int(DEFAULT_BATTERY_CAPACITY))
 
-    # ---------- HOURLY MODEL-SPECIFIC INPUTS ----------
-    # For the two hourly approaches, we pick an EV charging pattern
+    # Hourly specifics
     ev_charging_hourly = st.sidebar.selectbox("EV Charging Pattern (Hourly)", ["Night", "Daytime"])
-    reset_battery_daily = st.sidebar.checkbox("Reset Battery at start of each day? (Hourly)", False)
+    reset_battery_daily = st.sidebar.checkbox("Reset Battery Daily? (Hourly)", False)
+
+    # ~~~~ Seasonal Variation Toggle for Hourly ~~~~
+    use_seasonal_variation = st.sidebar.checkbox("Use Seasonal Variation (Hourly)?", False)
+    st.sidebar.markdown("""
+    **If enabled**, the hourly models will scale daily solar & household usage by month-specific factors.
+    """)
+
+    # Example monthly scaling factors for house load & solar
+    # (Here we provide some arbitrary sample values. You can customize or add user sliders.)
+    default_house_factors = [1.0, 0.95, 0.9, 0.9, 0.95, 1.0, 1.05, 1.05, 1.0, 1.0, 1.0, 1.0]
+    default_solar_factors = [0.7, 0.75, 0.9, 1.0, 1.2, 1.3, 1.4, 1.35, 1.1, 0.9, 0.75, 0.65]
 
     # ---------- TABS ----------
-    tab1, tab2, tab3 = st.tabs(["Monthly Approach", "Basic Hourly", "Advanced Hourly (NEM3-like)"])
+    tab1, tab2, tab3 = st.tabs(["Monthly Approach", "Basic Hourly", "Advanced Hourly (NEM 3.0)"])
 
     # ================
     # TAB 1: Monthly
@@ -556,11 +577,10 @@ def main():
 
         # 2) Household
         daily_house = household_consumption * (1 + fluctuation)
-        house_yearly = daily_house * 365
         house_monthly = calculate_monthly_values(daily_house)
 
         # 3) Solar
-        solar_yearly, solar_monthly = calculate_solar_production(solar_size)
+        _, solar_monthly = calculate_solar_production(solar_size)
 
         # 4) Run monthly cost calc
         (
@@ -592,10 +612,11 @@ def main():
         st.write("### Annual Summaries")
         st.write(f"**Annual EV Consumption**: {sum(ev_monthly):.1f} kWh")
         st.write(f"**Annual Household Consumption**: {sum(house_monthly):.1f} kWh")
+
         st.write(f"**Annual Solar Production**: {sum(solar_monthly):.1f} kWh")
         st.write(f"**Total Cost (No Solar)**: ${sum(total_ns):.2f}")
         st.write(f"**Total Cost (NEM 2)**: ${sum(total_n2):.2f}")
-        st.write(f"**Total Cost (NEM 3 + Batt)**: ${sum(total_n3):.2f}")
+        st.write(f"**Total Cost (NEM 3+Batt)**: ${sum(total_n3):.2f}")
 
         # Plots
         st.write("### Monthly Consumption")
@@ -632,10 +653,10 @@ def main():
         st.pyplot(fig4)
 
         st.write("""
-        **Notes (Monthly)**  
-        - Simplified net metering logic (NEM 2 credit at off-peak rate).  
-        - Battery approach is monthly net, which is quite an approximation.  
-        - Real NEM 3.0 often uses **hourly export** values and different TOU schedules.
+        **Notes (Monthly Approach)**  
+        - Simplified net metering logic (credits at off-peak for NEM 2).  
+        - Battery usage is aggregated monthly (a big approximation).  
+        - Real NEM 3.0 typically involves **hourly** export rates, etc.
         """)
 
     # ================
@@ -644,9 +665,23 @@ def main():
     with tab2:
         st.header("Basic Hourly Approach")
 
-        # Build 365-day arrays
-        daily_house_kwh = np.full(DAYS_PER_YEAR, household_consumption * (1 + fluctuation))
-        daily_solar_kwh = np.full(DAYS_PER_YEAR, solar_size * 4)  # ~4 kWh/kW/day
+        if use_seasonal_variation:
+            st.markdown("**Seasonal Variation Enabled**: We'll use monthly factors for house/solar in the daily arrays.")
+            # Build daily arrays with seasonal scaling
+            daily_house_kwh = build_daily_array_seasonal(
+                household_consumption * (1+fluctuation), 
+                default_house_factors
+            )
+            daily_solar_kwh = build_daily_array_seasonal(
+                solar_size * 4,  # baseline 4 kWh/kW/day
+                default_solar_factors
+            )
+        else:
+            # No seasonality: same daily values all year
+            daily_house_kwh = np.full(DAYS_PER_YEAR, household_consumption * (1+fluctuation))
+            daily_solar_kwh = np.full(DAYS_PER_YEAR, solar_size * 4)
+
+        # EV
         daily_ev_kwh = np.full(
             DAYS_PER_YEAR,
             (commute_miles / efficiency) * (days_per_week / 7.0)
@@ -674,7 +709,7 @@ def main():
         **Notes (Basic Hourly)**  
         - Naive battery dispatch: use battery whenever there's load, charge with leftover solar.  
         - **No net export credit**: leftover solar is simply "lost."  
-        - Single set of import rates (on/off/super-off-peak) applied each hour.  
+        - Single set of import rates (on/off/super-off-peak) for the day.
         """)
 
         # Let user pick a day to plot
@@ -711,8 +746,20 @@ def main():
     with tab3:
         st.header("Advanced Hourly NEM 3.0-Like Approach")
 
-        daily_house_kwh = np.full(DAYS_PER_YEAR, household_consumption * (1 + fluctuation))
-        daily_solar_kwh = np.full(DAYS_PER_YEAR, solar_size * 4)
+        if use_seasonal_variation:
+            st.markdown("**Seasonal Variation Enabled** for advanced hourly.")
+            daily_house_kwh = build_daily_array_seasonal(
+                household_consumption * (1+fluctuation),
+                default_house_factors
+            )
+            daily_solar_kwh = build_daily_array_seasonal(
+                solar_size * 4,
+                default_solar_factors
+            )
+        else:
+            daily_house_kwh = np.full(DAYS_PER_YEAR, household_consumption * (1+fluctuation))
+            daily_solar_kwh = np.full(DAYS_PER_YEAR, solar_size * 4)
+
         daily_ev_kwh = np.full(
             DAYS_PER_YEAR,
             (commute_miles / efficiency) * (days_per_week / 7.0)
@@ -745,11 +792,10 @@ def main():
 
         st.write("""
         **Notes (Advanced Hourly NEM 3.0)**  
-        - Separate **import** vs. **export** rates, with export typically lower.  
-        - Battery is used primarily during on-peak hours to avoid high import.  
-        - Excess solar is exported only after battery is full.  
-        - We store battery if we expect future on-peak hours that day.  
-        - Real NEM 3.0 is more complex, often with monthly or seasonal variations in export rates.  
+        - Separate **import** vs. **export** rates, typically exporting for less credit than import cost.  
+        - Battery is **saved** for on-peak if future on-peak hours remain that day.  
+        - **Excess solar** is exported only if battery is full.  
+        - Real NEM 3.0 can have monthly or hourly variations in export rates beyond this example.
         """)
 
         # Plot a selected day
@@ -780,8 +826,6 @@ def main():
         axZ.legend(loc="upper right")
         st.pyplot(figY)
 
-# --------------------------------------------------------------------------------
-# RUN
-# --------------------------------------------------------------------------------
+
 if __name__ == "__main__":
     main()
