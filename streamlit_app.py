@@ -1,4 +1,4 @@
-import streamlit as st
+=import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -108,16 +108,59 @@ def simulate_scenarios():
 
     return results
 
+# Interactive parameters adjustment
+def interactive_simulation():
+    st.sidebar.header("Adjust Simulation Parameters")
+
+    solar = st.sidebar.slider("Solar Production (kWh per month)", 0, 1500, 1000, 50)
+    household = st.sidebar.slider("Household Consumption (kWh per month)", 0, 1000, 400, 50)
+    ev = st.sidebar.slider("EV Consumption (kWh per month)", 0, 500, 100, 10)
+    battery_capacity = st.sidebar.slider("Battery Capacity (kWh)", 0, 20, 10, 1)
+    charging_time = st.sidebar.radio("EV Charging Time", ["Night (Super Off-Peak)", "Daytime (Peak)"])
+
+    ev_cost_no_solar, ev_cost_nem_2, nem_3_battery_costs, total_cost_no_solar, total_cost_nem_2, total_cost_nem_3 = calculate_monthly_costs_updated(
+        solar, household, ev, battery_capacity, charging_time
+    )
+
+    st.header("Live Simulation Results")
+    results_df = pd.DataFrame({
+        "Metric": ["EV Cost (No Solar)", "EV Cost (NEM 2.0)", "EV Cost (NEM 3.0 + Battery)", "Total Cost (No Solar)", "Total Cost (NEM 2.0)", "Total Cost (NEM 3.0 + Battery)"],
+        "Monthly Cost ($)": [
+            sum(ev_cost_no_solar) / 12,
+            sum(ev_cost_nem_2) / 12,
+            sum(nem_3_battery_costs) / 12,
+            sum(total_cost_no_solar) / 12,
+            sum(total_cost_nem_2) / 12,
+            sum(total_cost_nem_3) / 12,
+        ],
+        "Yearly Cost ($)": [
+            sum(ev_cost_no_solar),
+            sum(ev_cost_nem_2),
+            sum(nem_3_battery_costs),
+            sum(total_cost_no_solar),
+            sum(total_cost_nem_2),
+            sum(total_cost_nem_3),
+        ],
+    })
+
+    st.table(results_df)
+
 # Visualization and analysis
 def create_visualizations(results):
     st.title("Energy Simulation Dashboard")
 
-    # Create tabs for scenarios and comparison
-    tabs = st.tabs([f"Scenario {i+1}" for i in range(len(results))] + ["Comparison"])
+    # Create tabs for interactive adjustments and scenarios
+    tabs = st.tabs(["Interactive Simulation", "Predefined Scenarios", "Comparison"])
 
-    for idx, result in enumerate(results):
-        with tabs[idx]:
-            st.header(f"Scenario {idx + 1} Results")
+    # Tab 1: Interactive Simulation
+    with tabs[0]:
+        interactive_simulation()
+
+    # Tab 2: Predefined Scenarios
+    with tabs[1]:
+        st.header("Predefined Scenarios")
+        for idx, result in enumerate(results):
+            st.subheader(f"Scenario {idx + 1} Results")
 
             scenario = result["Scenario"]
             st.write("**Scenario Parameters:**")
@@ -137,8 +180,8 @@ def create_visualizations(results):
             })
             st.table(summary_df)
 
-    # Comparison Tab
-    with tabs[-1]:
+    # Tab 3: Comparison
+    with tabs[2]:
         st.header("Comparison of All Scenarios")
         comparison_df = pd.DataFrame(results)
 
