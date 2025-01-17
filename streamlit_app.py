@@ -138,18 +138,26 @@ st.table(monthly_data)
 # Visualizations
 st.write("### Visualizations")
 
-# 1. Monthly Energy Flows
-st.write("#### Monthly Energy Flows")
+# 1. Chart: Total Consumption
+st.write("#### Total Energy Consumption")
 fig, ax = plt.subplots()
 ax.bar(monthly_data["Month"], monthly_data["EV Consumption (kWh)"], label="EV Consumption")
 ax.bar(monthly_data["Month"], monthly_data["Household Consumption (kWh)"], bottom=monthly_data["EV Consumption (kWh)"], label="Household Consumption")
+ax.plot(monthly_data["Month"], monthly_data["Total Consumption (EV + Household, kWh)"], label="Total Consumption", color="red", linestyle="--")
+ax.set_ylabel("Energy (kWh)")
+ax.legend()
+st.pyplot(fig)
+
+# 2. Chart: Solar Production
+st.write("#### Solar Production")
+fig, ax = plt.subplots()
 ax.plot(monthly_data["Month"], monthly_data["Solar Production (kWh)"], label="Solar Production", color="gold", marker="o")
 ax.set_ylabel("Energy (kWh)")
 ax.legend()
 st.pyplot(fig)
 
-# 2. EV Charging Costs
-st.write("#### EV Charging Costs Comparison")
+# 3. Chart: EV Charging Costs
+st.write("#### EV Charging Costs")
 fig, ax = plt.subplots()
 ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (No Solar, $)"], label="No Solar")
 ax.plot(monthly_data["Month"], monthly_data["EV Charging Cost (Solar with NEM 2.0, $)"], label="NEM 2.0")
@@ -158,7 +166,7 @@ ax.set_ylabel("Cost ($)")
 ax.legend()
 st.pyplot(fig)
 
-# 3. Total Monthly Costs
+# 4. Chart: Total Costs to User
 st.write("#### Total Monthly Costs")
 fig, ax = plt.subplots()
 ax.plot(monthly_data["Month"], monthly_data["Total Cost (No Solar, EV + Household, $)"], label="No Solar")
