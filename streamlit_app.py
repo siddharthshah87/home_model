@@ -3,29 +3,35 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# For the advanced LP approach
+try:
+    import pulp
+    from pulp import LpProblem, LpMinimize, LpVariable, LpStatus, value
+except ImportError:
+    # If PuLP isn't installed, we can try to install it on the fly or display a warning.
+    st.warning("PuLP not found. The 'Advanced Hourly LP' tab may not work unless PuLP is installed.")
+    # Alternatively: !pip install pulp
+
 # --------------------------------------------------------------------------------
-#                          GLOBAL CONSTANTS
+#                                GLOBAL CONSTANTS
 # --------------------------------------------------------------------------------
 
-# ~~~~~~~~~ MONTHLY MODEL CONSTANTS ~~~~~~~~~
+# ~~~~~ MONTHLY MODEL CONSTANTS ~~~~~
 DEFAULT_COMMUTE_MILES = 30
 DEFAULT_EFFICIENCY = {"Model Y": 3.5, "Model 3": 4.0}
 DEFAULT_BATTERY_CAPACITY = 10  # kWh
 DEFAULT_BATTERY_EFFICIENCY = 0.9  # 90%
 DEFAULT_SOLAR_SIZE = 7.5  # kW
-TOU_RATES = {
-    "summer": {"on_peak": 0.45, "off_peak": 0.25, "super_off_peak": 0.12},
-    "winter": {"on_peak": 0.35, "off_peak": 0.20, "super_off_peak": 0.10},
-}
 DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8  # kWh/day
 DEFAULT_CONSUMPTION_FLUCTUATION = 0.2  # 20%
 DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-SUMMER_MONTHS = [5, 6, 7, 8]
-WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]
+MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+SUMMER_MONTHS = [5, 6, 7, 8]  # June(5) - Sept(8)
+WINTER_MONTHS = [0, 1, 2, 3, 4, 9, 10, 11]  # Jan-May, Oct-Dec
 
-# ~~~~~~~~~ BASIC HOURLY MODEL CONSTANTS ~~~~~~~~~
+# ~~~~~ Basic Hourly Model ~~~~~
 HOUR_TOU_SCHEDULE_BASIC = {
-    "on_peak_hours": list(range(16, 21)),        # 4 PM - 8 PM
+    "on_peak_hours": list(range(16, 21)),       # 4 PM - 8 PM
     "off_peak_hours": list(range(7, 16)) + [21, 22],  # 7 AM - 3 PM, 9 PM - 10 PM
     "super_off_peak_hours": list(range(0, 7)) + [23], # 0 AM - 6 AM, 11 PM
 }
@@ -36,51 +42,19 @@ HOUR_TOU_RATES_BASIC = {
 }
 BATTERY_HOURLY_EFFICIENCY_BASIC = 0.90
 
-# ~~~~~~~~~ ADVANCED HOURLY "NEM 3.0-LIKE" CONSTANTS ~~~~~~~~~
-ADV_TOU_SCHEDULE = {
-    "on_peak_hours": list(range(16, 21)),       
-    "off_peak_hours": list(range(7, 16)) + [21, 22],
-    "super_off_peak_hours": list(range(0, 7)) + [23],
-}
-IMPORT_RATES = {
-    "on_peak": 0.45,
-    "off_peak": 0.25,
-    "super_off_peak": 0.12
-}
-EXPORT_RATES = {
-    "on_peak": 0.10,
-    "off_peak": 0.06,
-    "super_off_peak": 0.04
-}
-ADV_BATTERY_EFFICIENCY = 0.90
-
+# ~~~~~ Advanced Hourly LP Approach (Seasonal, Weekend/Weekday) ~~~~~
 DAYS_PER_YEAR = 365
 
-# --------------------------------------------------------------------------------
-#                  COMMON / SEASONAL HELPER FUNCTIONS
-# --------------------------------------------------------------------------------
-
-def build_daily_array_seasonal(base_daily_value, monthly_factors):
-    """
-    Create a 365-element array of daily values with
-    per-month scaling factors.
-      - base_daily_value: baseline daily usage/production
-      - monthly_factors: list of length 12 for each month
-    """
-    daily_values = []
-    for month_idx, ndays in enumerate(DAYS_IN_MONTH):
-        factor = monthly_factors[month_idx]
-        for _ in range(ndays):
-            daily_values.append(base_daily_value * factor)
-    # Trim/ensure length is exactly 365
-    return np.array(daily_values[:365])
+# Example monthly scale factors for **local seasonality** (you can adjust in the sidebar)
+DEFAULT_SOLAR_FACTORS = [0.6, 0.65, 0.75, 0.90, 1.0, 1.2, 1.3, 1.25, 1.0, 0.8, 0.65, 0.55]
+DEFAULT_LOAD_FACTORS  = [1.1, 1.0, 0.9, 0.9, 1.0, 1.2, 1.3, 1.3, 1.1, 1.0, 1.0, 1.1]
 
 # --------------------------------------------------------------------------------
-#                           MONTHLY MODEL FUNCTIONS
+#                      HELPER FUNCTIONS: MONTHLY MODEL
 # --------------------------------------------------------------------------------
 
 def calculate_monthly_values(daily_value):
-    """Multiply a daily value by the # of days in each month."""
+    """Convert a constant daily_value into a monthly list by multiplying by days in each month."""
     return [daily_value * d for d in DAYS_IN_MONTH]
 
 def calculate_ev_demand(miles, efficiency, days_per_week=7):
@@ -97,7 +71,7 @@ def calculate_ev_demand(miles, efficiency, days_per_week=7):
     return yearly, monthly
 
 def calculate_solar_production(size_kw):
-    """4 kWh/kW/day as a rough average."""
+    """4 kWh/kW/day assumption."""
     yearly = size_kw * 4 * 365
     monthly = calculate_monthly_values(size_kw * 4)
     return yearly, monthly
@@ -116,22 +90,21 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly,
     battery_state = 0.0
 
     for month in range(12):
-        # Pick summer/winter rates
+        # Simple "summer" vs. "winter" logic
         if month in SUMMER_MONTHS:
-            rates = TOU_RATES["summer"]
+            on_peak = 0.45; off_peak = 0.25; super_off = 0.12
         else:
-            rates = TOU_RATES["winter"]
+            on_peak = 0.35; off_peak = 0.20; super_off = 0.10
 
         # 1) No Solar
-        cost_house_ns = household_monthly[month] * rates["off_peak"]
-        cost_ev_ns = ev_monthly[month] * rates["super_off_peak"]
+        cost_house_ns = household_monthly[month] * off_peak
+        cost_ev_ns = ev_monthly[month] * super_off
         ev_cost_no_solar.append(cost_ev_ns)
         total_no_solar.append(cost_house_ns + cost_ev_ns)
 
         # 2) NEM 2.0
-        # Excess solar credited at off_peak; net that credit from EV usage
         excess_solar = solar_monthly[month] - household_monthly[month]
-        credit_nem2 = max(0, excess_solar * rates["off_peak"])
+        credit_nem2 = max(0, excess_solar * off_peak)
         cost_ev_nem2 = max(0, ev_monthly[month] - credit_nem2)
         ev_cost_nem_2.append(cost_ev_nem2)
         total_nem_2.append(cost_house_ns - credit_nem2 + cost_ev_nem2)
@@ -159,9 +132,9 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly,
 
         # Remainder from grid
         if time_of_charging == "Night (Super Off-Peak)":
-            cost_ev_nem3 = ev_shortfall * rates["super_off_peak"]
+            cost_ev_nem3 = ev_shortfall * super_off
         else:
-            cost_ev_nem3 = ev_shortfall * rates["on_peak"]
+            cost_ev_nem3 = ev_shortfall * on_peak
 
         ev_cost_nem_3.append(cost_ev_nem3)
         total_nem_3.append(cost_house_ns + cost_ev_nem3)
@@ -169,7 +142,7 @@ def calculate_monthly_costs(ev_monthly, solar_monthly, household_monthly,
     return ev_cost_no_solar, ev_cost_nem_2, ev_cost_nem_3, total_no_solar, total_nem_2, total_nem_3
 
 # --------------------------------------------------------------------------------
-#                  BASIC HOURLY MODEL FUNCTIONS
+#               HELPER FUNCTIONS: BASIC HOURLY MODEL
 # --------------------------------------------------------------------------------
 
 def classify_tou_basic(hour_of_day):
@@ -181,15 +154,7 @@ def classify_tou_basic(hour_of_day):
         return "super_off_peak"
 
 def simulate_hour_basic(hour_idx, solar_kwh, house_kwh, ev_kwh, battery_state, battery_capacity):
-    """
-    Very naive approach:
-    1) Use solar to meet demand
-    2) leftover solar -> battery
-    3) discharge battery if demand remains
-    4) remainder from grid
-    5) single set of TOU rates for cost
-    6) no net export compensation
-    """
+    """Naive battery usage, no export credit, single set of import rates."""
     hour_of_day = hour_idx % 24
     period = classify_tou_basic(hour_of_day)
     rate = HOUR_TOU_RATES_BASIC[period]
@@ -236,9 +201,8 @@ def run_basic_hourly_sim(
 ):
     """
     Basic hourly simulation for a year, naive battery usage, 
-    no net export compensation, single import rates.
+    no net export compensation, single TOU rates.
     """
-    # 24-hour shapes for distributing daily usage
     house_shape = np.array([
         0.02, 0.02, 0.02, 0.02, 0.02, 0.03, 0.04, 0.06,
         0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.06, 0.07,
@@ -261,6 +225,7 @@ def run_basic_hourly_sim(
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         ])
     else:
+        # "Daytime" pattern example
         ev_shape = np.array([
             0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.10, 0.15,
             0.15, 0.15, 0.15, 0.10, 0.05, 0.0, 0.0, 0.0,
@@ -286,7 +251,6 @@ def run_basic_hourly_sim(
         "solar_unused": []
     }
 
-    # Loop over 365 days
     for d in range(DAYS_PER_YEAR):
         if reset_battery_daily:
             battery_state = 0.0
@@ -305,11 +269,11 @@ def run_basic_hourly_sim(
             h_s = s_24[hour]
             h_e = e_24[hour]
 
-            battery_state, grid_kwh, cost, sol_un = simulate_hour_basic(
+            battery_state, g_kwh, cost, sol_un = simulate_hour_basic(
                 hour_idx, h_s, h_h, h_e, battery_state, battery_capacity
             )
             total_cost += cost
-            total_grid += grid_kwh
+            total_grid += g_kwh
             total_solar_unused += sol_un
 
             # log
@@ -318,7 +282,7 @@ def run_basic_hourly_sim(
             results["house_kwh"].append(h_h)
             results["ev_kwh"].append(h_e)
             results["solar_kwh"].append(h_s)
-            results["grid_kwh"].append(grid_kwh)
+            results["grid_kwh"].append(g_kwh)
             results["cost"].append(cost)
             results["battery_state"].append(battery_state)
             results["solar_unused"].append(sol_un)
@@ -327,505 +291,561 @@ def run_basic_hourly_sim(
     return total_cost, total_grid, total_solar_unused, df
 
 # --------------------------------------------------------------------------------
-#             ADVANCED HOURLY "NEM 3.0-LIKE" MODEL FUNCTIONS
+#         ADVANCED HOURLY LP APPROACH: SEASONAL, WEEKDAY/WEEKEND, PARTIAL EV
 # --------------------------------------------------------------------------------
 
-def classify_tou_adv(hour_of_day):
-    if hour_of_day in ADV_TOU_SCHEDULE["on_peak_hours"]:
-        return "on_peak"
-    elif hour_of_day in ADV_TOU_SCHEDULE["off_peak_hours"]:
-        return "off_peak"
-    else:
-        return "super_off_peak"
-
-def any_future_on_peak(day, hour):
-    # Check if any upcoming hour this day is on-peak
-    for h in range(hour+1, 24):
-        if h in ADV_TOU_SCHEDULE["on_peak_hours"]:
-            return True
-    return False
-
-def advanced_battery_dispatch(hour_idx, solar_kwh, house_kwh, ev_kwh, battery_state, battery_capacity):
+def generate_utility_rate_schedule():
     """
-    1) use solar to meet load
-    2) leftover -> battery
-    3) if still leftover, export
-    4) discharge battery if on-peak or if no future on-peak remains
-    5) remainder from grid
-    6) track export credit
+    Synthetic schedule with columns [month, day_type, hour, import_rate, export_rate, demand_rate].
+    Real data might come from a CSV or official tariff.
     """
-    day = hour_idx // 24
-    hour_of_day = hour_idx % 24
-    period = classify_tou_adv(hour_of_day)
+    data = []
+    for m in range(12):
+        for d_type in ["weekday","weekend"]:
+            for h in range(24):
+                # E.g. on-peak from 4pm to 8pm
+                if 16 <= h < 20:
+                    import_r = 0.45
+                    export_r = 0.12
+                    demand_rate = 10.0 if d_type == "weekday" else 8.0
+                elif 7 <= h < 16 or 20 <= h < 22:
+                    import_r = 0.25
+                    export_r = 0.08
+                    demand_rate = 5.0
+                else:
+                    import_r = 0.12
+                    export_r = 0.04
+                    demand_rate = 2.0
+                data.append({
+                    "month": m,
+                    "day_type": d_type,
+                    "hour": h,
+                    "import_rate": import_r,
+                    "export_rate": export_r,
+                    "demand_rate": demand_rate
+                })
+    df = pd.DataFrame(data)
+    return df
 
-    import_rate = IMPORT_RATES[period]
-    export_rate = EXPORT_RATES[period]
+def build_daily_arrays_with_factors(base_house_kwh, base_solar_kw, house_factors, solar_factors):
+    """
+    Create 365-day arrays for house load & solar production, scaled monthly by house_factors & solar_factors.
+    Each list must be length 12. We multiply base_house_kwh by house_factors[m], etc.
+    """
+    daily_house = []
+    daily_solar = []
+    day_count = 0
+    for m, ndays in enumerate(DAYS_IN_MONTH):
+        for _ in range(ndays):
+            # House scaled
+            house_val = base_house_kwh * house_factors[m]
+            # Solar scaled
+            sol_val = (base_solar_kw * 4) * solar_factors[m]  # 4 kWh/kW/day baseline
+            daily_house.append(house_val)
+            daily_solar.append(sol_val)
+            day_count += 1
+            if day_count >= DAYS_PER_YEAR:
+                break
+        if day_count >= DAYS_PER_YEAR:
+            break
+    # Make sure we have exactly 365
+    daily_house = daily_house[:DAYS_PER_YEAR]
+    daily_solar = daily_solar[:DAYS_PER_YEAR]
+    return np.array(daily_house), np.array(daily_solar)
 
-    total_demand = house_kwh + ev_kwh
+def build_daily_ev_profile(daily_miles_mean=30, daily_miles_std=5, ev_eff=4.0,
+                           ev_battery_cap=50.0):
+    """
+    Build a 365-array of EV kWh needed each day, e.g. random daily miles.
+    We'll let the LP decide *which hours* to charge.
+    """
+    rng = np.random.default_rng(42)
+    daily_ev = []
+    for _ in range(DAYS_PER_YEAR):
+        miles = rng.normal(daily_miles_mean, daily_miles_std)
+        miles = max(0, miles)
+        needed_kwh = miles / ev_eff
+        needed_kwh = min(needed_kwh, ev_battery_cap)  # can't exceed battery capacity
+        daily_ev.append(needed_kwh)
+    return np.array(daily_ev)
 
-    # 1) solar offsets load
-    if solar_kwh >= total_demand:
-        leftover_solar = solar_kwh - total_demand
-        total_demand = 0
+# -------------- LP logic for each day --------------
+def optimize_daily(
+    day_idx,
+    house_24,
+    solar_24,
+    ev_needed_kwh,
+    ev_arrival,
+    ev_depart,
+    start_batt_soc,
+    battery_cap_home,
+    ev_battery_cap,  # not strictly used in constraints, but might be used if partial
+    df_rates_day,
+    demand_charge_enabled=False
+):
+    """
+    Solve a daily LP for day_idx:
+    - house_24: array(24) of house load
+    - solar_24: array(24) of solar production
+    - ev_needed_kwh: total kWh the EV must get this day
+    - ev_arrival, ev_depart: hours (0-24)
+    - start_batt_soc: home battery state at start
+    - battery_cap_home: home battery capacity
+    - df_rates_day: has columns [hour, import_rate, export_rate, demand_rate]
+    - demand_charge_enabled: if True, we add demand charge logic
+
+    Return (day_cost, end_batt_soc, df_day_solution)
+    """
+    prob = LpProblem(f"Day_{day_idx}_Dispatch", LpMinimize)
+
+    # Decision variables
+    home_batt_in  = LpVariable.dicts("home_batt_in", range(24), lowBound=0)
+    home_batt_out = LpVariable.dicts("home_batt_out", range(24), lowBound=0)
+    ev_charge     = LpVariable.dicts("ev_charge", range(24), lowBound=0)
+    grid_import   = LpVariable.dicts("grid_import", range(24), lowBound=0)
+    grid_export   = LpVariable.dicts("grid_export", range(24), lowBound=0)
+    soc = [LpVariable(f"soc_{h}", lowBound=0, upBound=battery_cap_home) for h in range(25)]
+
+    # Demand charge variable
+    peak_demand = LpVariable("peak_demand", lowBound=0)
+
+    cost_import = []
+    credit_export = []
+
+    for h in range(24):
+        import_r = df_rates_day.loc[h, "import_rate"]
+        export_r = df_rates_day.loc[h, "export_rate"]
+        # demand_r = df_rates_day.loc[h, "demand_rate"] # used to define cost if needed
+
+        # If outside EV window, no EV charge
+        if not(ev_arrival <= h < ev_depart):
+            prob += ev_charge[h] == 0, f"EV_cant_charge_{h}"
+
+        # 1) Balance
+        # solar_24[h] + home_batt_out[h] + grid_import[h] = 
+        #     house_24[h] + ev_charge[h] + home_batt_in[h] + grid_export[h]
+        prob += (
+            solar_24[h] + home_batt_out[h] + grid_import[h]
+            == house_24[h] + ev_charge[h] + home_batt_in[h] + grid_export[h]
+        ), f"Balance_{h}"
+
+        # 2) Battery SOC recursion: soc[h+1] = soc[h] + batt_in - batt_out
+        prob += (
+            soc[h+1] == soc[h] + home_batt_in[h] - home_batt_out[h]
+        ), f"SOC_{h}"
+
+        # 3) Demand charge: peak_demand >= grid_import[h]
+        if demand_charge_enabled:
+            prob += peak_demand >= grid_import[h], f"Peak_dem_{h}"
+
+        # cost terms
+        cost_import.append(grid_import[h]*import_r)
+        credit_export.append(grid_export[h]*export_r)
+
+    # EV must get total needed for the day
+    prob += sum(ev_charge[h] for h in range(24)) == ev_needed_kwh, "EV_requirement"
+
+    # starting battery soc
+    prob += soc[0] == start_batt_soc, "Start_batt"
+
+    # objective
+    total_import_cost = sum(cost_import)
+    total_export_credit = sum(credit_export)
+    if demand_charge_enabled:
+        # We'll just multiply peak_demand by the max demand_rate for the day as a simple approach
+        max_dem_rate = df_rates_day["demand_rate"].max()
+        demand_cost = peak_demand * max_dem_rate
     else:
-        leftover_solar = 0
-        total_demand -= solar_kwh
+        demand_cost = 0
+    prob.setObjective(total_import_cost - total_export_credit + demand_cost)
 
-    # 2) charge battery
-    export_kwh = 0
-    if leftover_solar > 0:
-        space_needed = (battery_capacity - battery_state) / ADV_BATTERY_EFFICIENCY
-        if space_needed > 0:
-            can_store = min(leftover_solar, space_needed)
-            battery_state += can_store * ADV_BATTERY_EFFICIENCY
-            leftover_solar -= can_store
+    # Solve
+    prob.solve(pulp.PULP_CBC_CMD(msg=0))
+    day_cost = value(prob.objective)
+    end_batt_soc = value(soc[24])
 
-        # 3) leftover solar is exported
-        if leftover_solar > 0:
-            export_kwh = leftover_solar
-            leftover_solar = 0
+    # Build day solution DataFrame
+    results_hourly = []
+    for h in range(24):
+        row = {
+            "hour": h,
+            "grid_import": value(grid_import[h]),
+            "grid_export": value(grid_export[h]),
+            "batt_in": value(home_batt_in[h]),
+            "batt_out": value(home_batt_out[h]),
+            "ev_charge": value(ev_charge[h]),
+        }
+        results_hourly.append(row)
+    df_day = pd.DataFrame(results_hourly)
 
-    # 4) discharge battery
-    on_peak = (hour_of_day in ADV_TOU_SCHEDULE["on_peak_hours"])
-    if total_demand > 0 and battery_state > 0:
-        if on_peak:
-            discharge = min(total_demand, battery_state)
-            total_demand -= discharge
-            battery_state -= discharge
-        else:
-            if not any_future_on_peak(day, hour_of_day):
-                discharge = min(total_demand, battery_state)
-                total_demand -= discharge
-                battery_state -= discharge
-            # else do not discharge, save for upcoming on-peak
+    return day_cost, end_batt_soc, df_day
 
-    # 5) remainder from grid
-    grid_kwh = total_demand
-    import_cost = grid_kwh * import_rate
 
-    # 6) export credit
-    export_credit = export_kwh * export_rate
-
-    return battery_state, grid_kwh, import_cost, export_kwh, export_credit
-
-def run_advanced_hourly_sim(
+def run_advanced_lp_simulation(
     daily_house,
     daily_solar,
     daily_ev,
-    battery_capacity=10.0,
-    ev_charging_pattern="Night",
-    reset_battery_daily=False
+    ev_arrival_hr=18,
+    ev_departure_hr=7,
+    home_batt_capacity=10,
+    ev_battery_cap=50,
+    demand_charge_enabled=False
 ):
     """
-    365-day advanced hourly sim with separate import/export rates, 
-    saving battery for on-peak.
-    Returns (total_net_cost, df_hourly).
+    Multi-day approach: For each day, do a daily LP with day_type(weekday/weekend) & month from day index.
+    We sum up costs, carry over end-of-day battery SOC as the next day's start.
+
+    Returns total_cost, df_solution
     """
-    # 24-hour shapes
-    house_shape = np.array([
-        0.02, 0.02, 0.02, 0.02, 0.02, 0.03, 0.04, 0.06,
-        0.06, 0.06, 0.06, 0.05, 0.05, 0.05, 0.06, 0.07,
-        0.08, 0.06, 0.05, 0.05, 0.04, 0.03, 0.02, 0.02
-    ])
-    house_shape /= house_shape.sum()
+    df_rates = generate_utility_rate_schedule()
 
-    solar_shape = np.array([
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.10,
-        0.15, 0.20, 0.20, 0.15, 0.10, 0.05, 0.0, 0.0,
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-    ])
-    if solar_shape.sum() > 0:
-        solar_shape /= solar_shape.sum()
+    # day_of_year -> (month, day_type)
+    cum_days = np.cumsum([0]+DAYS_IN_MONTH)
+    day_solutions = []
+    total_cost = 0.0
+    battery_soc = 0.0
 
-    if ev_charging_pattern == "Night":
-        ev_shape = np.array([
-            0.3, 0.3, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ])
-    else:
-        ev_shape = np.array([
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.10, 0.15,
-            0.15, 0.15, 0.15, 0.10, 0.05, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ])
-    if ev_shape.sum() > 0:
-        ev_shape /= ev_shape.sum()
+    for day_idx in range(DAYS_PER_YEAR):
+        # figure out month
+        m = 0
+        while m < 12 and day_idx >= cum_days[m+1]:
+            m += 1
 
-    battery_state = 0.0
-    total_import_cost = 0.0
-    total_export_credit = 0.0
+        # day_type
+        dow = day_idx % 7
+        if dow in [5,6]:
+            d_type = "weekend"
+        else:
+            d_type = "weekday"
 
-    results = {
-        "day": [],
-        "hour": [],
-        "house_kwh": [],
-        "ev_kwh": [],
-        "solar_kwh": [],
-        "grid_import_kwh": [],
-        "import_cost": [],
-        "export_kwh": [],
-        "export_credit": [],
-        "battery_state": []
-    }
+        # slice rates for this (month, day_type, hour)
+        # then ensure it's sorted by hour 0-23
+        df_rates_day = df_rates[(df_rates["month"]==m) & (df_rates["day_type"]==d_type)].copy()
+        df_rates_day.sort_values("hour", inplace=True)
+        df_rates_day.set_index("hour", inplace=True)
 
-    for d in range(DAYS_PER_YEAR):
-        if reset_battery_daily:
-            battery_state = 0.0
+        # daily kWh
+        day_house = daily_house[day_idx]
+        day_solar = daily_solar[day_idx]
+        day_ev = daily_ev[day_idx]
 
-        dh = daily_house[d]
-        ds = daily_solar[d]
-        de = daily_ev[d]
+        # For simplicity, flatten house & solar into 24 lumps
+        house_24 = np.full(24, day_house/24.0)
+        solar_24 = np.full(24, day_solar/24.0)
 
-        hh_24 = dh * house_shape
-        ss_24 = ds * solar_shape
-        ee_24 = de * ev_shape
+        cost_day, end_soc, df_day = optimize_daily(
+            day_idx,
+            house_24,
+            solar_24,
+            day_ev,
+            ev_arrival_hr,
+            ev_departure_hr,
+            battery_soc,
+            home_batt_capacity,
+            ev_battery_cap,
+            df_rates_day,
+            demand_charge_enabled=demand_charge_enabled
+        )
+        total_cost += cost_day
+        battery_soc = end_soc
 
-        for hour in range(24):
-            hour_idx = d*24 + hour
-            h_h = hh_24[hour]
-            h_s = ss_24[hour]
-            h_e = ee_24[hour]
+        df_day["day_idx"] = day_idx
+        df_day["cost_day"] = cost_day
+        df_day["month"] = m
+        df_day["day_type"] = d_type
+        day_solutions.append(df_day)
 
-            battery_state, g_kwh, imp_cost, exp_kwh, exp_credit = advanced_battery_dispatch(
-                hour_idx, h_s, h_h, h_e, battery_state, battery_capacity
-            )
+    df_solution = pd.concat(day_solutions, ignore_index=True)
+    return total_cost, df_solution
 
-            total_import_cost += imp_cost
-            total_export_credit += exp_credit
-
-            results["day"].append(d)
-            results["hour"].append(hour)
-            results["house_kwh"].append(h_h)
-            results["ev_kwh"].append(h_e)
-            results["solar_kwh"].append(h_s)
-            results["grid_import_kwh"].append(g_kwh)
-            results["import_cost"].append(imp_cost)
-            results["export_kwh"].append(exp_kwh)
-            results["export_credit"].append(exp_credit)
-            results["battery_state"].append(battery_state)
-
-    df = pd.DataFrame(results)
-    net_cost = total_import_cost - total_export_credit
-    return net_cost, df
 
 # --------------------------------------------------------------------------------
-#                             STREAMLIT APP
+#                           STREAMLIT MAIN APP
 # --------------------------------------------------------------------------------
-
 def main():
-    st.title("All-in-One: Monthly vs Basic Hourly vs Advanced Hourly (NEM 3.0) + Seasonality")
+    st.title("All-In-One App: Monthly vs. Basic Hourly vs. Advanced LP with Seasonality & EV")
 
     st.write("""
-    This single app demonstrates three distinct models, plus **optional seasonal variation** 
-    for the **hourly** approaches.  
-    - **Monthly** approach: Simple net-metering logic (NEM 2 vs NEM 3 naive).
-    - **Basic Hourly**: Single import TOU rates, naive battery usage, no export credit.
-    - **Advanced Hourly (NEM 3.0-like)**: Separate import/export rates, battery saved for on-peak.
-    - **Seasonality** for hourly: Each month can scale daily solar/house usage with monthly factors.
+    This single Streamlit app provides:
+    1. **Monthly Net Approach** (simple NEM 2 vs. NEM 3 battery logic).
+    2. **Basic Hourly** approach with naive battery usage, no export credit.
+    3. **Advanced Hourly 'LP Optimization'** approach with:
+       - Seasonal monthly factors for solar/house loads
+       - Weekend vs. weekday TOU schedules
+       - Partial EV charging (arrival/departure, random daily miles)
+       - Demand charges
+       - Hourly import/export rates
     """)
 
-    # ~~~~~ SIDEBAR ~~~~~
     st.sidebar.header("Common Inputs")
 
     # EV
     commute_miles = st.sidebar.slider("Daily Commute (miles)", 10, 100, DEFAULT_COMMUTE_MILES)
     ev_model = st.sidebar.selectbox("EV Model", list(DEFAULT_EFFICIENCY.keys()))
     efficiency = DEFAULT_EFFICIENCY[ev_model]
-    charging_days_option = st.sidebar.radio("EV Charging Frequency", ["Daily", "Weekdays Only"])
+    charging_days_option = st.sidebar.radio("EV Charging Frequency (Monthly & Basic Hourly)", ["Daily", "Weekdays Only"])
     days_per_week = 5 if charging_days_option == "Weekdays Only" else 7
 
-    # For monthly model's battery logic
-    monthly_charging_time = st.sidebar.radio("EV Charging Time (Monthly)", 
-                                             ["Night (Super Off-Peak)", "Daytime (Peak)"])
+    monthly_time_of_charging = st.sidebar.radio("Monthly Model: EV Charging Time", 
+                                               ["Night (Super Off-Peak)", "Daytime (Peak)"])
 
     # Household
-    household_consumption = st.sidebar.slider("Avg Household (kWh/day)", 10, 50, int(DEFAULT_HOUSEHOLD_CONSUMPTION))
-    fluctuation = st.sidebar.slider("Consumption Fluctuation (%)", 0, 50, 
-                                    int(DEFAULT_CONSUMPTION_FLUCTUATION*100)) / 100
+    household_consumption = st.sidebar.slider("Base Daily Household (kWh)", 10, 50, int(DEFAULT_HOUSEHOLD_CONSUMPTION))
+    fluctuation = st.sidebar.slider("Household Fluctuation (%)", 0, 50, int(DEFAULT_CONSUMPTION_FLUCTUATION*100)) / 100
 
     # Solar & Battery
-    solar_size = st.sidebar.slider("Solar Size (kW)", 3, 15, int(DEFAULT_SOLAR_SIZE))
-    battery_capacity = st.sidebar.slider("Battery Capacity (kWh)", 0, 20, int(DEFAULT_BATTERY_CAPACITY))
+    solar_size = st.sidebar.slider("Solar Size (kW)", 0, 15, int(DEFAULT_SOLAR_SIZE))
+    battery_capacity = st.sidebar.slider("Battery Capacity (kWh) (Monthly & Basic Hourly)", 0, 20, int(DEFAULT_BATTERY_CAPACITY))
 
-    # Hourly specifics
-    ev_charging_hourly = st.sidebar.selectbox("EV Charging Pattern (Hourly)", ["Night", "Daytime"])
-    reset_battery_daily = st.sidebar.checkbox("Reset Battery Daily? (Hourly)", False)
+    # ~~~~~~~~~ Tabs ~~~~~~~~~
+    tab1, tab2, tab3 = st.tabs(["Monthly Approach", "Basic Hourly", "Advanced Hourly LP"])
 
-    # ~~~~ Seasonal Variation Toggle for Hourly ~~~~
-    use_seasonal_variation = st.sidebar.checkbox("Use Seasonal Variation (Hourly)?", False)
-    st.sidebar.markdown("""
-    **If enabled**, the hourly models will scale daily solar & household usage by month-specific factors.
-    """)
-
-    # Example monthly scaling factors for house load & solar
-    # (Here we provide some arbitrary sample values. You can customize or add user sliders.)
-    default_house_factors = [1.0, 0.95, 0.9, 0.9, 0.95, 1.0, 1.05, 1.05, 1.0, 1.0, 1.0, 1.0]
-    default_solar_factors = [0.7, 0.75, 0.9, 1.0, 1.2, 1.3, 1.4, 1.35, 1.1, 0.9, 0.75, 0.65]
-
-    # ---------- TABS ----------
-    tab1, tab2, tab3 = st.tabs(["Monthly Approach", "Basic Hourly", "Advanced Hourly (NEM 3.0)"])
-
-    # ================
-    # TAB 1: Monthly
-    # ================
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #                     TAB 1: MONTHLY APPROACH
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     with tab1:
         st.header("Monthly Net Calculation")
 
-        # 1) EV Demand
+        # EV monthly
         ev_yearly, ev_monthly = calculate_ev_demand(commute_miles, efficiency, days_per_week)
 
-        # 2) Household
-        daily_house = household_consumption * (1 + fluctuation)
-        house_monthly = calculate_monthly_values(daily_house)
+        # House monthly
+        daily_house_val = household_consumption * (1 + fluctuation)
+        house_monthly = calculate_monthly_values(daily_house_val)
 
-        # 3) Solar
+        # Solar monthly
         _, solar_monthly = calculate_solar_production(solar_size)
 
-        # 4) Run monthly cost calc
-        (
-            ev_cost_ns, ev_cost_n2, ev_cost_n3,
-            total_ns, total_n2, total_n3
-        ) = calculate_monthly_costs(
-            ev_monthly, solar_monthly, house_monthly,
+        # Run monthly costs
+        (ev_ns, ev_n2, ev_n3,
+         tot_ns, tot_n2, tot_n3) = calculate_monthly_costs(
+            ev_monthly,
+            solar_monthly,
+            house_monthly,
             battery_capacity,
-            monthly_charging_time
+            monthly_time_of_charging
         )
 
-        months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-        df_monthly = pd.DataFrame({
+        months = MONTH_NAMES
+        df_m = pd.DataFrame({
             "Month": months,
             "EV (kWh)": ev_monthly,
             "House (kWh)": house_monthly,
             "Solar (kWh)": solar_monthly,
-            "EV Cost (No Solar)": ev_cost_ns,
-            "EV Cost (NEM 2)": ev_cost_n2,
-            "EV Cost (NEM 3+Batt)": ev_cost_n3,
-            "Total (No Solar)": total_ns,
-            "Total (NEM 2)": total_n2,
-            "Total (NEM 3+Batt)": total_n3
+            "EV Cost (No Solar)": ev_ns,
+            "EV Cost (NEM 2)": ev_n2,
+            "EV Cost (NEM 3+Batt)": ev_n3,
+            "Total (No Solar)": tot_ns,
+            "Total (NEM 2)": tot_n2,
+            "Total (NEM 3+Batt)": tot_n3
         })
 
-        st.subheader("Monthly Results Table")
-        st.dataframe(df_monthly.style.format(precision=2))
+        st.write("### Monthly Table")
+        st.dataframe(df_m.style.format(precision=2))
 
         st.write("### Annual Summaries")
-        st.write(f"**Annual EV Consumption**: {sum(ev_monthly):.1f} kWh")
-        st.write(f"**Annual Household Consumption**: {sum(house_monthly):.1f} kWh")
+        st.write(f"**Annual EV kWh**: {sum(ev_monthly):.1f}")
+        st.write(f"**Annual House kWh**: {sum(house_monthly):.1f}")
+        st.write(f"**Annual Solar**: {sum(solar_monthly):.1f} kWh")
 
-        st.write(f"**Annual Solar Production**: {sum(solar_monthly):.1f} kWh")
-        st.write(f"**Total Cost (No Solar)**: ${sum(total_ns):.2f}")
-        st.write(f"**Total Cost (NEM 2)**: ${sum(total_n2):.2f}")
-        st.write(f"**Total Cost (NEM 3+Batt)**: ${sum(total_n3):.2f}")
+        st.write(f"**Total Cost (No Solar)**: ${sum(tot_ns):.2f}")
+        st.write(f"**Total Cost (NEM 2)**: ${sum(tot_n2):.2f}")
+        st.write(f"**Total Cost (NEM 3 + Batt)**: ${sum(tot_n3):.2f}")
 
-        # Plots
-        st.write("### Monthly Consumption")
+        st.write("#### Visualization")
         fig1, ax1 = plt.subplots()
-        ax1.bar(months, df_monthly["EV (kWh)"], label="EV")
-        ax1.bar(months, df_monthly["House (kWh)"], bottom=df_monthly["EV (kWh)"], label="House")
+        ax1.bar(months, df_m["EV (kWh)"], label="EV")
+        ax1.bar(months, df_m["House (kWh)"], bottom=df_m["EV (kWh)"], label="House")
         ax1.set_ylabel("kWh")
+        ax1.set_title("Monthly Consumption")
         ax1.legend()
         st.pyplot(fig1)
 
-        st.write("### Solar Production")
         fig2, ax2 = plt.subplots()
-        ax2.plot(months, df_monthly["Solar (kWh)"], marker="o", color="gold", label="Solar")
+        ax2.plot(months, df_m["Solar (kWh)"], marker="o", color="gold", label="Solar")
         ax2.set_ylabel("kWh")
+        ax2.set_title("Monthly Solar Production")
         ax2.legend()
         st.pyplot(fig2)
 
-        st.write("### EV Charging Cost Comparison")
         fig3, ax3 = plt.subplots()
-        ax3.plot(months, df_monthly["EV Cost (No Solar)"], label="No Solar")
-        ax3.plot(months, df_monthly["EV Cost (NEM 2)"], label="NEM 2")
-        ax3.plot(months, df_monthly["EV Cost (NEM 3+Batt)"], label="NEM 3+Batt")
+        ax3.plot(months, df_m["Total (No Solar)"], label="No Solar")
+        ax3.plot(months, df_m["Total (NEM 2)"], label="NEM 2")
+        ax3.plot(months, df_m["Total (NEM 3+Batt)"], label="NEM 3 + Batt")
         ax3.set_ylabel("Cost ($)")
+        ax3.set_title("Monthly Total Costs")
         ax3.legend()
         st.pyplot(fig3)
 
-        st.write("### Total Monthly Costs")
-        fig4, ax4 = plt.subplots()
-        ax4.plot(months, df_monthly["Total (No Solar)"], label="No Solar")
-        ax4.plot(months, df_monthly["Total (NEM 2)"], label="NEM 2")
-        ax4.plot(months, df_monthly["Total (NEM 3+Batt)"], label="NEM 3+Batt")
-        ax4.set_ylabel("Cost ($)")
-        ax4.legend()
-        st.pyplot(fig4)
-
         st.write("""
-        **Notes (Monthly Approach)**  
-        - Simplified net metering logic (credits at off-peak for NEM 2).  
-        - Battery usage is aggregated monthly (a big approximation).  
-        - Real NEM 3.0 typically involves **hourly** export rates, etc.
+        **Notes**: This is a **simplified monthly** net metering approach. Real NEM 3.0 
+        typically uses hourly export rates and more complex calculations.
         """)
 
-    # ================
-    # TAB 2: Basic Hourly
-    # ================
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #                     TAB 2: BASIC HOURLY
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     with tab2:
-        st.header("Basic Hourly Approach")
+        st.header("Basic Hourly Approach (Naive Battery, No Export Credit)")
 
-        if use_seasonal_variation:
-            st.markdown("**Seasonal Variation Enabled**: We'll use monthly factors for house/solar in the daily arrays.")
-            # Build daily arrays with seasonal scaling
-            daily_house_kwh = build_daily_array_seasonal(
-                household_consumption * (1+fluctuation), 
-                default_house_factors
-            )
-            daily_solar_kwh = build_daily_array_seasonal(
-                solar_size * 4,  # baseline 4 kWh/kW/day
-                default_solar_factors
-            )
-        else:
-            # No seasonality: same daily values all year
-            daily_house_kwh = np.full(DAYS_PER_YEAR, household_consumption * (1+fluctuation))
-            daily_solar_kwh = np.full(DAYS_PER_YEAR, solar_size * 4)
+        # Build 365-day arrays (no seasonality toggle here, you can add if desired)
+        daily_house_val = household_consumption * (1 + fluctuation)
+        daily_house_arr = np.full(DAYS_PER_YEAR, daily_house_val)
+        daily_solar_arr = np.full(DAYS_PER_YEAR, solar_size * 4)  # 4 kWh/kW/day
+        daily_ev_arr = np.full(DAYS_PER_YEAR, (commute_miles / efficiency)*(days_per_week/7.0))
 
-        # EV
-        daily_ev_kwh = np.full(
-            DAYS_PER_YEAR,
-            (commute_miles / efficiency) * (days_per_week / 7.0)
-        )
+        reset_daily_batt = st.checkbox("Reset Battery Each Day? (Basic Hourly)", False)
+        ev_pattern_basic = st.selectbox("EV Charging Pattern (Night/Daytime - Basic Hourly)",
+                                        ["Night","Daytime"])
 
-        cost_basic, grid_basic, solar_unused_basic, df_basic = run_basic_hourly_sim(
-            daily_house_kwh,
-            daily_solar_kwh,
-            daily_ev_kwh,
+        cost_basic, grid_basic, solar_unused, df_basic = run_basic_hourly_sim(
+            daily_house_arr,
+            daily_solar_arr,
+            daily_ev_arr,
             battery_capacity=battery_capacity,
-            ev_charging_pattern=ev_charging_hourly,
-            reset_battery_daily=reset_battery_daily
+            ev_charging_pattern=ev_pattern_basic,
+            reset_battery_daily=reset_daily_batt
         )
 
-        st.write("### Annual Results (Basic Hourly)")
-        st.write(f"**Total Annual Cost:** ${cost_basic:,.2f}")
-        st.write(f"**Total Grid Usage:** {grid_basic:,.0f} kWh")
-        st.write(f"**Unused Solar:** {solar_unused_basic:,.0f} kWh (no export compensation)")
+        st.write("### Annual Results")
+        st.write(f"**Total Annual Cost**: ${cost_basic:,.2f}")
+        st.write(f"**Grid Usage**: {grid_basic:,.0f} kWh")
+        st.write(f"**Unused Solar**: {solar_unused:,.0f} kWh")
 
-        st.write(f"**Avg Daily Cost:** ${cost_basic/DAYS_PER_YEAR:,.2f}")
-        st.write(f"**Avg Daily Grid:** {grid_basic/DAYS_PER_YEAR:,.1f} kWh")
-        st.write(f"**Avg Daily Unused Solar:** {solar_unused_basic/DAYS_PER_YEAR:,.1f} kWh")
+        # Show day-level or hour-level details
+        day_sel = st.slider("Pick a Day (0-364) to see hourly breakdown", 0, DAYS_PER_YEAR-1, 0)
+        df_day_sel = df_basic[df_basic["day"]==day_sel]
 
-        st.write("""
-        **Notes (Basic Hourly)**  
-        - Naive battery dispatch: use battery whenever there's load, charge with leftover solar.  
-        - **No net export credit**: leftover solar is simply "lost."  
-        - Single set of import rates (on/off/super-off-peak) for the day.
-        """)
-
-        # Let user pick a day to plot
-        day_select = st.slider("Select a Day (0-364) for Plot", 0, DAYS_PER_YEAR-1, 0)
-        df_day = df_basic[df_basic["day"] == day_select]
-
-        st.write(f"### Hourly Profile - Day {day_select}")
+        st.write(f"### Hourly Data - Day {day_sel}")
         figA, axA = plt.subplots()
-        axA.plot(df_day["hour"], df_day["house_kwh"], label="House Load")
-        axA.plot(df_day["hour"], df_day["ev_kwh"], label="EV Load", linestyle="--")
-        axA.plot(df_day["hour"], df_day["solar_kwh"], label="Solar", color="gold")
-        axA.set_xlabel("Hour of Day")
+        axA.plot(df_day_sel["hour"], df_day_sel["house_kwh"], label="House")
+        axA.plot(df_day_sel["hour"], df_day_sel["ev_kwh"], label="EV", linestyle="--")
+        axA.plot(df_day_sel["hour"], df_day_sel["solar_kwh"], label="Solar", color="gold")
+        axA.set_xlabel("Hour")
         axA.set_ylabel("kWh")
         axA.legend()
         st.pyplot(figA)
 
-        st.write("### Battery State and Grid Usage")
+        st.write("Battery State & Grid Usage")
         figB, axB = plt.subplots()
-        axB.plot(df_day["hour"], df_day["battery_state"], color="green", label="Battery (kWh)")
-        axB.set_xlabel("Hour of Day")
+        axB.plot(df_day_sel["hour"], df_day_sel["battery_state"], color="green", label="Battery (kWh)")
+        axB.set_xlabel("Hour")
         axB.set_ylabel("Battery (kWh)")
         axB.legend(loc="upper left")
 
         axC = axB.twinx()
-        axC.plot(df_day["hour"], df_day["grid_kwh"], color="red", label="Grid Import (kWh)")
+        axC.plot(df_day_sel["hour"], df_day_sel["grid_kwh"], color="red", label="Grid Import")
         axC.set_ylabel("Grid (kWh)")
         axC.legend(loc="upper right")
-
         st.pyplot(figB)
 
-    # ================
-    # TAB 3: Advanced Hourly (NEM 3.0)
-    # ================
-    with tab3:
-        st.header("Advanced Hourly NEM 3.0-Like Approach")
-
-        if use_seasonal_variation:
-            st.markdown("**Seasonal Variation Enabled** for advanced hourly.")
-            daily_house_kwh = build_daily_array_seasonal(
-                household_consumption * (1+fluctuation),
-                default_house_factors
-            )
-            daily_solar_kwh = build_daily_array_seasonal(
-                solar_size * 4,
-                default_solar_factors
-            )
-        else:
-            daily_house_kwh = np.full(DAYS_PER_YEAR, household_consumption * (1+fluctuation))
-            daily_solar_kwh = np.full(DAYS_PER_YEAR, solar_size * 4)
-
-        daily_ev_kwh = np.full(
-            DAYS_PER_YEAR,
-            (commute_miles / efficiency) * (days_per_week / 7.0)
-        )
-
-        net_cost, df_adv = run_advanced_hourly_sim(
-            daily_house_kwh,
-            daily_solar_kwh,
-            daily_ev_kwh,
-            battery_capacity=battery_capacity,
-            ev_charging_pattern=ev_charging_hourly,
-            reset_battery_daily=reset_battery_daily
-        )
-
-        # Summaries
-        st.write("### Annual Results (Advanced Hourly NEM 3.0-like)")
-        st.write(f"**Total Annual Net Cost:** ${net_cost:,.2f}")
-
-        total_import = df_adv["grid_import_kwh"].sum()
-        total_export = df_adv["export_kwh"].sum()
-        total_import_cost = df_adv["import_cost"].sum()
-        total_export_credit = df_adv["export_credit"].sum()
-
-        st.write(f"**Grid Imports:** {total_import:,.1f} kWh")
-        st.write(f"**Solar Exports:** {total_export:,.1f} kWh")
-        st.write(f"**Import Cost:** ${total_import_cost:,.2f}")
-        st.write(f"**Export Credit:** -${total_export_credit:,.2f}")
-
-        st.write(f"**Avg Daily Net Cost:** ${net_cost/DAYS_PER_YEAR:,.2f}")
-
         st.write("""
-        **Notes (Advanced Hourly NEM 3.0)**  
-        - Separate **import** vs. **export** rates, typically exporting for less credit than import cost.  
-        - Battery is **saved** for on-peak if future on-peak hours remain that day.  
-        - **Excess solar** is exported only if battery is full.  
-        - Real NEM 3.0 can have monthly or hourly variations in export rates beyond this example.
+        **Notes**: 
+        - This approach uses a naive battery dispatch. 
+        - **No** export credit: any excess solar is lost.
+        - Simplified TOU: single on/off/super-off-peak set, 
+          ignoring weekend vs. weekday or season.
         """)
 
-        # Plot a selected day
-        day2_select = st.slider("Select a Day (0-364) for Detailed Plot (Advanced)", 0, DAYS_PER_YEAR-1, 0)
-        df_day2 = df_adv[df_adv["day"] == day2_select]
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #                   TAB 3: ADVANCED HOURLY LP
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    with tab3:
+        st.header("Advanced Hourly LP Approach")
 
-        st.write(f"### Hourly Profile - Day {day2_select}")
-        figX, axX = plt.subplots()
-        axX.plot(df_day2["hour"], df_day2["house_kwh"], label="House kWh")
-        axX.plot(df_day2["hour"], df_day2["ev_kwh"], label="EV kWh", linestyle="--")
-        axX.plot(df_day2["hour"], df_day2["solar_kwh"], label="Solar kWh", color="gold")
-        axX.set_xlabel("Hour")
-        axX.set_ylabel("kWh")
-        axX.legend()
-        st.pyplot(figX)
+        st.write("""
+        **Features**:
+        - Monthly scaling factors for house & solar (seasonality).
+        - Weekend vs. weekday rate differences.
+        - Partial EV charging (daily random miles, arrival/departure hours).
+        - Demand charges (optional).
+        - Real (synthetic) import/export rates each hour, 
+          daily optimization for each day in the year.
+        """)
 
-        st.write("### Battery, Import, and Export (Day View)")
-        figY, axY = plt.subplots()
-        axY.plot(df_day2["hour"], df_day2["battery_state"], label="Battery (kWh)", color="green")
-        axY.set_xlabel("Hour")
-        axY.set_ylabel("Battery (kWh)")
-        axY.legend(loc="upper left")
+        # Let user set up advanced parameters
+        st.subheader("Seasonal Factors & Advanced EV / Demand Charge")
 
-        axZ = axY.twinx()
-        axZ.plot(df_day2["hour"], df_day2["grid_import_kwh"], label="Grid Import", color="red")
-        axZ.plot(df_day2["hour"], df_day2["export_kwh"], label="Solar Export", color="blue")
-        axZ.set_ylabel("kWh")
-        axZ.legend(loc="upper right")
-        st.pyplot(figY)
+        # House & solar factors
+        adv_house_factors = []
+        adv_solar_factors = []
+        with st.expander("Customize Monthly Scale Factors"):
+            for i,mn in enumerate(MONTH_NAMES):
+                hf = st.slider(f"{mn} House Factor", 0.5, 1.5, DEFAULT_LOAD_FACTORS[i], 0.05, key=f"housef_{i}")
+                sf = st.slider(f"{mn} Solar Factor", 0.5, 1.5, DEFAULT_SOLAR_FACTORS[i], 0.05, key=f"solarf_{i}")
+                adv_house_factors.append(hf)
+                adv_solar_factors.append(sf)
 
+        # EV daily random usage
+        adv_ev_miles_mean = st.slider("Mean Daily Miles (Advanced EV)", 0, 100, 30)
+        adv_ev_miles_std = st.slider("StdDev Daily Miles", 0, 30, 5)
+        adv_ev_eff = st.slider("EV Efficiency (miles/kWh) - Advanced LP", 3.0, 5.0, 4.0)
+        adv_ev_batt_cap = st.slider("EV Battery Capacity (kWh) for partial charges", 20, 100, 50)
+        adv_ev_arrival = st.slider("EV Arrival Hour", 0, 23, 18)
+        adv_ev_depart = st.slider("EV Departure Hour", 0, 23, 7)
+
+        adv_batt_capacity_home = st.slider("Home Battery Capacity (kWh) - Advanced LP", 0, 40, 10)
+        adv_demand_charges = st.checkbox("Enable Demand Charges in the LP?", False)
+
+        st.write("**Running Advanced Simulation** (This might take a moment to solve 365 LPs)...")
+
+        daily_house_advanced, daily_solar_advanced = build_daily_arrays_with_factors(
+            household_consumption,  # base daily house
+            solar_size,             # base solar kW
+            adv_house_factors,
+            adv_solar_factors
+        )
+        # Apply fluctuation
+        daily_house_advanced *= (1 + fluctuation)
+
+        daily_ev_advanced = build_daily_ev_profile(
+            adv_ev_miles_mean, adv_ev_miles_std, adv_ev_eff, adv_ev_batt_cap
+        )
+
+        # Solve the multi-day LP
+        if "pulp" in globals():  # confirm PuLP is installed
+            adv_total_cost, df_adv_sol = run_advanced_lp_simulation(
+                daily_house_advanced,
+                daily_solar_advanced,
+                daily_ev_advanced,
+                ev_arrival_hr=adv_ev_arrival,
+                ev_departure_hr=adv_ev_depart,
+                home_batt_capacity=adv_batt_capacity_home,
+                ev_battery_cap=adv_ev_batt_cap,
+                demand_charge_enabled=adv_demand_charges
+            )
+            st.success(f"Advanced Simulation Complete. Total Annual Net Cost: ${adv_total_cost:,.2f}")
+
+            # Summaries
+            total_import_kwh = df_adv_sol["grid_import"].sum()
+            total_export_kwh = df_adv_sol["grid_export"].sum()
+            st.write(f"**Grid Imports**: {total_import_kwh:,.1f} kWh")
+            st.write(f"**Solar Exports**: {total_export_kwh:,.1f} kWh")
+
+            # Let user pick day
+            day_pick = st.slider("Select a Day (0-364) to see LP results", 0, DAYS_PER_YEAR-1, 0)
+            df_day_pick = df_adv_sol[df_adv_sol["day_idx"]==day_pick].copy()
+
+            st.write(f"### Day {day_pick} Hourly Dispatch")
+            figX, axX = plt.subplots()
+            axX.plot(df_day_pick["hour"], df_day_pick["batt_in"], label="Battery In", color="orange")
+            axX.plot(df_day_pick["hour"], df_day_pick["batt_out"], label="Battery Out", color="green")
+            axX.plot(df_day_pick["hour"], df_day_pick["ev_charge"], label="EV Charge", color="red")
+            axX.set_xlabel("Hour")
+            axX.set_ylabel("kWh")
+            axX.legend()
+            st.pyplot(figX)
+
+            st.write("""
+            **Interpreting**:
+            - The LP decides each hour how much to charge the home battery, 
+              discharge it, or charge the EV, to minimize total cost 
+              (import cost - export credit + demand charge).
+            - If demand charges are enabled, it also tries to minimize peak demand.
+            """)
+
+        else:
+            st.error("PuLP not available. Please install PuLP to run the Advanced Hourly LP model.")
 
 if __name__ == "__main__":
     main()
