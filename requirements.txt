@@ -2,3 +2,4 @@ matplotlib==3.10.0
 numpy==2.1.1
 pandas==2.2.3
 streamlit==1.41.1
+PuLP==2.9.0
