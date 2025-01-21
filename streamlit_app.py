@@ -563,7 +563,7 @@ def run_advanced_lp_sim(
 # --------------------------------------------------------------------------------
 
 def main():
-    st.title("Unified App: All Inputs Linked for Monthly, Basic Hourly, and Advanced LP")
+    st.title("Home Energy Management Model")
 
     st.write("""
     This single app uses **one** set of user inputs for:
@@ -571,10 +571,8 @@ def main():
     2. **Basic Hourly** (naive battery, no export credit),
     3. **Advanced Hourly LP** (NEM 3.0-like) with multiple modes (TOU, Self-Cons, Backup).
     
-    **Key Fixes** to avoid unrealistic \$0 outcomes:
     - Lower export rates < import rates,
     - Daily battery reset in advanced LP,
-    - Proper dimension checks in monthly net.
     """)
 
     st.sidebar.header("Common User Inputs")
