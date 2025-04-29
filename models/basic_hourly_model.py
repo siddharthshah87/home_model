@@ -23,37 +23,52 @@ def classify_tou_basic(hour):
         return "super_off_peak"
 
 def simulate_hour_basic(hour_idx, solar_kwh, house_kwh, ev_kwh,
-                        battery_state, battery_capacity):
-    hour_of_day= hour_idx%24
-    period= classify_tou_basic(hour_of_day)
-    rate= HOUR_TOU_RATES_BASIC[period]
+                        battery_state, battery_capacity,
+                        smart_panel=None):
+    """
+    Added optional smart_panel control.
+    """
 
-    total_demand= house_kwh+ ev_kwh
-    if solar_kwh>= total_demand:
-        leftover_solar= solar_kwh- total_demand
-        total_demand=0
+    hour_of_day = hour_idx % 24
+    period = classify_tou_basic(hour_of_day)
+    rate = HOUR_TOU_RATES_BASIC[period]
+
+    total_demand = house_kwh + ev_kwh
+
+    # SMART PANEL CONTROL
+    if smart_panel and smart_panel.panel_type != "Legacy":
+        # If EV charger is controllable, we can defer EV charging during peak
+        if smart_panel.is_load_controlled("ev") and period == "on_peak":
+            ev_kwh = 0.0  # Defer EV charging
+            total_demand = house_kwh  # only household load
+
+    # Proceed as before
+    if solar_kwh >= total_demand:
+        leftover_solar = solar_kwh - total_demand
+        total_demand = 0
     else:
-        leftover_solar=0
-        total_demand-= solar_kwh
+        leftover_solar = 0
+        total_demand -= solar_kwh
 
-    solar_unused=0
-    if leftover_solar>0 and battery_state< battery_capacity:
-        available_space= (battery_capacity- battery_state)/BATTERY_HOURLY_EFFICIENCY_BASIC
-        to_battery= min(leftover_solar, available_space)
-        battery_state+= to_battery*BATTERY_HOURLY_EFFICIENCY_BASIC
-        leftover_solar-= to_battery
-        solar_unused= leftover_solar
+    solar_unused = 0
+    if leftover_solar > 0 and battery_state < battery_capacity:
+        available_space = (battery_capacity - battery_state) / BATTERY_HOURLY_EFFICIENCY_BASIC
+        to_battery = min(leftover_solar, available_space)
+        battery_state += to_battery * BATTERY_HOURLY_EFFICIENCY_BASIC
+        leftover_solar -= to_battery
+        solar_unused = leftover_solar
     else:
-        solar_unused= leftover_solar
+        solar_unused = leftover_solar
 
-    if total_demand>0 and battery_state>0:
-        discharge= min(total_demand, battery_state)
-        total_demand-= discharge
-        battery_state-= discharge
+    if total_demand > 0 and battery_state > 0:
+        discharge = min(total_demand, battery_state)
+        total_demand -= discharge
+        battery_state -= discharge
 
-    grid_kwh= total_demand
-    cost= grid_kwh* rate
+    grid_kwh = total_demand
+    cost = grid_kwh * rate
     return battery_state, grid_kwh, cost, solar_unused
+
 
 def build_basic_ev_shape(pattern="Night"):
     shape= np.zeros(24)
