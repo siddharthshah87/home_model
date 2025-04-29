@@ -32,3 +32,17 @@ class SmartPanelConfig:
         if load_type == "battery":
             return self.control_battery
         return False
+    def get_controlled_loads(self):
+        controlled = []
+        if self.panel_type != "Legacy":
+            if self.control_ev:
+                controlled.append("EV")
+            if self.control_hvac:
+                controlled.append("HVAC")
+            if self.control_water_heater:
+                controlled.append("WaterHeater")
+            if self.control_solar_inverter:
+                controlled.append("SolarInverter")
+            if self.control_battery:
+                controlled.append("Battery")
+        return controlled
