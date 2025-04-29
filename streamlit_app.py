@@ -133,9 +133,10 @@ def main():
     )
 
     # ~~~ 4) Tab Layout ~~~
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Monthly Approach","Basic Hourly","Advanced Hourly","Battery Size Sweep","Recommendations"
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Monthly Approach", "Basic Hourly", "Advanced Hourly", "Battery Size Sweep", "Recommendations", "Cost Comparison"
     ])
+
 
     with tab1:
         st.header("Monthly Approach")
@@ -283,7 +284,56 @@ def main():
                 st.success("Here are your custom tips:")
                 for r in recs:
                     st.write("-", r)
-
+    with tab6:
+        st.header("Annual Cost Comparison: Legacy Panel vs Smart Panel")
+    
+        days = 365
+        daily_house_arr = np.full(days, house_kwh_base * (1 + fluct))
+        daily_solar_arr = np.full(days, solar_size * 4)
+        daily_ev_arr = np.full(days, (commute_miles / 4.0) * (days_per_week / 7.0))
+    
+        if monthly_charge_time == "Night (Super Off-Peak)":
+            ev_basic_pattern = "Night"
+        else:
+            ev_basic_pattern = "Daytime"
+    
+        # Simulate Legacy Panel (no control)
+        cost_legacy, grid_legacy, sol_un_legacy, df_legacy = run_basic_hourly_sim(
+            daily_house_arr,
+            daily_solar_arr,
+            daily_ev_arr,
+            unified_batt_capacity,
+            ev_basic_pattern,
+            reset_battery_daily=False,
+            smart_panel=None  # Legacy mode
+        )
+    
+        # Simulate Smart Panel (user settings)
+        cost_smart, grid_smart, sol_un_smart, df_smart = run_basic_hourly_sim(
+            daily_house_arr,
+            daily_solar_arr,
+            daily_ev_arr,
+            unified_batt_capacity,
+            ev_basic_pattern,
+            reset_battery_daily=False,
+            smart_panel=smart_panel
+        )
+    
+        st.write(f"**Legacy Panel Total Annual Cost:** ${cost_legacy:,.2f}")
+        st.write(f"**Smart Panel Total Annual Cost:** ${cost_smart:,.2f}")
+    
+        st.write("### Cost Comparison Bar Chart")
+        fig, ax = plt.subplots()
+        labels = ["Legacy Panel", "Smart Panel"]
+        costs = [cost_legacy, cost_smart]
+        ax.bar(labels, costs, color=["red", "green"])
+        ax.set_ylabel("Total Annual Cost ($)")
+        ax.set_title("Smart Panel vs Legacy Panel")
+        st.pyplot(fig)
+    
+        # Extra: Savings Calculation
+        savings = cost_legacy - cost_smart
+        st.success(f"**Annual Savings from Smart Panel: ${savings:,.2f}**")
 
 if __name__=="__main__":
     main()
