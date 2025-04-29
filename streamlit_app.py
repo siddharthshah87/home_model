@@ -38,6 +38,7 @@ from services.recommendation import (
 
 # Constants shared in app
 DAYS_IN_MONTH = [31,28,31,30,31,30,31,31,30,31,30,31]
+DAYS_PER_YEAR = 365
 MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 DEFAULT_COMMUTE_MILES = 30
 DEFAULT_SOLAR_SIZE = 7.5
