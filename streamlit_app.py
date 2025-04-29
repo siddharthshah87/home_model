@@ -134,9 +134,11 @@ def main():
     )
 
     # ~~~ 4) Tab Layout ~~~
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Monthly Approach", "Basic Hourly", "Advanced Hourly", "Battery Size Sweep", "Recommendations", "Cost Comparison", "Outage Resilience"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    "Monthly Approach", "Basic Hourly", "Advanced Hourly", "Battery Size Sweep", "Recommendations",
+    "Cost Comparison", "Outage Resilience", "V2H + Payback"
     ])
+
 
 
     with tab1:
@@ -357,6 +359,54 @@ def main():
         st.write(f"**Hours Supported by Backup System:** {result['hours_supported']}")
         st.write(f"**Coverage Rate:** {result['coverage_rate']}%")
         st.success(f"**Resilience Score:** {result['resilience_score']}")
+        
+    with tab8:
+        from models.v2h_export_model import simulate_v2h_savings
+        from models.load_priority_model import summarize_load_portfolio
+        from models.installer_finance_model import estimate_payback_costs
+    
+        st.header("V2H Benefit + Installer Payback View")
+    
+        st.subheader("🔌 V2H Energy Export Simulation")
+        v2h_savings = simulate_v2h_savings(
+            ev_batt_kwh=50,
+            max_discharge_kw=7.2,
+            efficiency=0.9,
+            days_active=150,
+            discharge_hours_per_day=3,
+            peak_rate=0.45,
+            offpeak_rate=0.12,
+            smart_panel=smart_panel
+        )
+        st.write(f"**Estimated Annual V2H Savings:** ${v2h_savings:,.2f}")
+    
+        st.subheader("🎯 Load Priority Overview")
+        portfolio = summarize_load_portfolio(smart_panel)
+        st.write(f"**Critical Loads Managed:** {portfolio['critical'] or 'None'}")
+        st.write(f"**Flexible Loads Managed:** {portfolio['flexible'] or 'None'}")
+        st.write(f"**Total Managed Loads:** {portfolio['total_managed']}")
+    
+        st.subheader("💸 Installer Cost Estimator & Payback")
+    
+        panel_cost = estimate_payback_costs(
+            panel_type=panel_type,
+            smart_features=True if smart_panel.panel_type != "Legacy" else False,
+            panel_upgrade_avoided=True,
+            v2h_enabled=True if smart_panel.is_load_controlled("ev") else False,
+            base_cost=2500,
+            install_cost=1200,
+            panel_upgrade_cost=4000
+        )
+        st.write(f"**Estimated System Cost (After Upgrade Savings):** ${panel_cost:,.2f}")
+    
+        years_to_payback = round(panel_cost / max(v2h_savings, 1), 1) if v2h_savings > 0 else "∞"
+        st.write(f"**Payback Period (Years):** {years_to_payback}")
+    
+        fig, ax = plt.subplots()
+        ax.bar(["Cost", "V2H Annual Savings"], [panel_cost, v2h_savings], color=["gray", "green"])
+        ax.set_ylabel("Dollars ($)")
+        ax.set_title("System Cost vs Annual Savings")
+        st.pyplot(fig)
 
 if __name__=="__main__":
     main()
