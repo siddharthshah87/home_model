@@ -336,7 +336,7 @@ def main():
         # Extra: Savings Calculation
         savings = cost_legacy - cost_smart
         st.success(f"**Annual Savings from Smart Panel: ${savings:,.2f}**")
-     with tab7:
+    with tab7:
         st.header("Backup Power Simulation")
     
         avg_outage_hours = st.slider("Average Outage Length (hrs)", 1, 24, 4)
