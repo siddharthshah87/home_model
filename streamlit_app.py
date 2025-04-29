@@ -106,6 +106,31 @@ def main():
                                          ["Night (Super Off-Peak)","Daytime (Peak)"])
 
     unified_batt_capacity= st.sidebar.slider("Battery(kWh, for all approaches, unless None)",0,20,int(DEFAULT_BATTERY_CAPACITY))
+    # === Smart Panel Setup ===
+    st.sidebar.header("Smart Panel Setup")
+    
+    panel_type = st.sidebar.selectbox(
+        "Panel Type",
+        ["Legacy", "Smart Subpanel", "Smart Full Panel"]
+    )
+    
+    control_ev = st.sidebar.checkbox("Control EV Charger?", value=True)
+    control_hvac = st.sidebar.checkbox("Control HVAC?", value=False)
+    control_water_heater = st.sidebar.checkbox("Control Water Heater?", value=False)
+    control_solar_inverter = st.sidebar.checkbox("Control Solar Inverter?", value=False)
+    control_battery = st.sidebar.checkbox("Control Home Battery?", value=False)
+    
+    # Create a SmartPanelConfig object
+    from models.panel_model import SmartPanelConfig
+    
+    smart_panel = SmartPanelConfig(
+        panel_type=panel_type,
+        control_ev=control_ev,
+        control_hvac=control_hvac,
+        control_water_heater=control_water_heater,
+        control_solar_inverter=control_solar_inverter,
+        control_battery=control_battery
+    )
 
     # ~~~ 4) Tab Layout ~~~
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
