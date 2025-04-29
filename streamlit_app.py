@@ -134,7 +134,7 @@ def main():
     )
 
     # ~~~ 4) Tab Layout ~~~
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Monthly Approach", "Basic Hourly", "Advanced Hourly", "Battery Size Sweep", "Recommendations", "Cost Comparison", "Outage Resilience"
     ])
 
@@ -337,27 +337,26 @@ def main():
         savings = cost_legacy - cost_smart
         st.success(f"**Annual Savings from Smart Panel: ${savings:,.2f}**")
      with tab7:
-        with st.tab("Outage Resilience"):
-            st.header("Backup Power Simulation")
-        
-            avg_outage_hours = st.slider("Average Outage Length (hrs)", 1, 24, 4)
-            outages_per_year = st.slider("Number of Outages per Year", 0, 12, 3)
-            critical_load_kw = st.slider("Critical Load (kW during outage)", 1.0, 10.0, 2.5)
-        
-            # Assume EV battery and house battery defined from earlier inputs
-            result = simulate_outage_resilience(
-                ev_battery_kwh=50,  # or let user input EV battery size
-                house_battery_kwh=unified_batt_capacity,
-                critical_load_kw=critical_load_kw,
-                avg_outage_hours=avg_outage_hours,
-                outages_per_year=outages_per_year,
-                smart_panel=smart_panel
-            )
-        
-            st.write(f"**Total Outage Hours per Year:** {result['total_outage_hours']}")
-            st.write(f"**Hours Supported by Backup System:** {result['hours_supported']}")
-            st.write(f"**Coverage Rate:** {result['coverage_rate']}%")
-            st.success(f"**Resilience Score:** {result['resilience_score']}")
+        st.header("Backup Power Simulation")
+    
+        avg_outage_hours = st.slider("Average Outage Length (hrs)", 1, 24, 4)
+        outages_per_year = st.slider("Number of Outages per Year", 0, 12, 3)
+        critical_load_kw = st.slider("Critical Load (kW during outage)", 1.0, 10.0, 2.5)
+    
+        # Assume EV battery and house battery defined from earlier inputs
+        result = simulate_outage_resilience(
+            ev_battery_kwh=50,  # or let user input EV battery size
+            house_battery_kwh=unified_batt_capacity,
+            critical_load_kw=critical_load_kw,
+            avg_outage_hours=avg_outage_hours,
+            outages_per_year=outages_per_year,
+            smart_panel=smart_panel
+        )
+    
+        st.write(f"**Total Outage Hours per Year:** {result['total_outage_hours']}")
+        st.write(f"**Hours Supported by Backup System:** {result['hours_supported']}")
+        st.write(f"**Coverage Rate:** {result['coverage_rate']}%")
+        st.success(f"**Resilience Score:** {result['resilience_score']}")
 
 if __name__=="__main__":
     main()
