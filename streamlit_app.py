@@ -157,5 +157,102 @@ def main():
         solar_orientation = 0
         solar_size = 0
 
+    load_profile = {
+        "panel_type": panel_type,
+        "ev": {
+            "enabled": control_ev,
+            "battery_kwh": ev_battery_kwh,
+            "charging_pattern": ev_charging_pattern,
+            "charging_days": ev_days_active,
+        },
+        "hvac": {
+            "enabled": control_hvac,
+            "runtime_hrs": hvac_runtime_hours,
+            "load_kw": hvac_kw,
+        },
+        "water_heater": {
+            "enabled": control_water_heater,
+            "load_kw": water_heater_kw,
+        },
+        "washer_dryer": {
+            "enabled": control_washer_dryer,
+            "runtime_hrs": washer_runtime_hrs,
+            "load_kw": washer_kw,
+        },
+        "dishwasher": {
+            "enabled": control_dishwasher,
+            "cycles_week": dishwasher_cycles,
+            "load_kw": dishwasher_kw,
+        },
+        "pool_pump": {
+            "enabled": control_pool_pump,
+            "runtime_hrs": pool_runtime,
+            "load_kw": pool_kw,
+        },
+        "battery": {
+            "enabled": control_battery,
+            "capacity_kwh": home_battery_kwh,
+        },
+        "solar": {
+            "enabled": control_solar_inverter,
+            "size_kw": solar_size,
+            "orientation": solar_orientation,
+            "shading": solar_shading,
+        }
+    }
+    # === Main Page UI ===
+    st.title("🔌 Smart Panel Energy Dashboard")
+
+    st.markdown("---")
+
+    st.subheader("Configuration Summary")
+    st.json(load_profile)
+
+    st.markdown("---")
+    
+    # Simulation trigger
+    if st.button("🚀 Run Simulation"):
+        st.success("Simulation complete! Sample output below.")
+
+        # --- Sample Key Metrics ---
+        st.subheader("📊 Key Performance Metrics")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Annual Energy Cost", "$1,850")
+        col2.metric("V2H Savings", "$327/year")
+        col3.metric("Payback Period", "5.2 years")
+        col4.metric("Resilience Score", "✅ Excellent")
+
+        st.markdown("---")
+        
+        # --- Sample Charts Placeholder ---
+        st.subheader("📈 Visualization")
+        chart_type = st.radio("Select View", ["Cost Comparison", "Hourly Load", "Resilience Profile"])
+
+        if chart_type == "Cost Comparison":
+            st.bar_chart(pd.DataFrame({"Legacy Panel": [1850], "Smart Panel": [1523]}))
+        elif chart_type == "Hourly Load":
+            st.line_chart(np.random.rand(24))
+        elif chart_type == "Resilience Profile":
+            st.area_chart(np.random.rand(24))
+
+        st.markdown("---")
+
+        # --- Insights Block ---
+        st.subheader("💡 Smart Recommendations")
+        st.success("Switching EV charging to night hours saves $210/year.")
+        st.warning("Washer/Dryer overlaps with peak hours. Consider deferral.")
+
+        st.markdown("---")
+        
+        # --- Actions ---
+        colA, colB = st.columns([1, 1])
+        with colA:
+            if st.button("🔄 Reset Inputs"):
+                st.experimental_rerun()
+        with colB:
+            if st.button("🖨️ Export Summary"):
+                st.info("Feature coming soon.")
+
+
 if __name__=="__main__":
     main()
