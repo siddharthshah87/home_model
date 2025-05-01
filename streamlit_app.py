@@ -47,83 +47,29 @@ DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8
 DEFAULT_CONSUMPTION_FLUCTUATION = 0.2
 
 def main():
-    st.title("Smart Home Panel")
-
-    # ~~~ 1) Bill Upload ~~~
-    st.sidebar.header("Utility Bill (PDF) Upload")
-    uploaded_file = st.sidebar.file_uploader("Upload Utility Bill", type=["pdf"])
-    user_bill_data = None
-
-    if uploaded_file:
-        # parse the PDF
-        user_bill_data = parse_utility_bill_pdf(uploaded_file)
-        if user_bill_data:
-            st.sidebar.write("Parsed Bill Data:", user_bill_data)
-        else:
-            st.sidebar.warning("Could not parse or no relevant info found in PDF.")
-
-    # ~~~ 2) URDB Plans (optional) ~~~
-    with st.sidebar.expander("URDB Rate Plans"):
-        states_list= ["AL","AR","AZ","CA","CO","CT","DE","FL","GA","HI",
-                      "IA","ID","IL","IN","KS","KY","LA","MA","MD","ME",
-                      "MI","MN","MO","MS","MT","NC","ND","NE","NH","NJ",
-                      "NM","NV","NY","OH","OK","OR","PA","RI","SC","SD",
-                      "TN","TX","UT","VA","VT","WA","WI","WV","WY"]
-        state_choice= st.selectbox("Pick State", states_list)
-        if st.button("Fetch Plans"):
-            plans= fetch_urdb_plans_for_state(state_choice)
-            if len(plans)>0:
-                st.session_state["urdb_plans"] = plans
-                st.success(f"Found {len(plans)} plans for {state_choice}!")
-            else:
-                st.warning("No plans found or error.")
-
-        chosen_plan=None
-        if "urdb_plans" in st.session_state:
-            plan_names= [p.get("name","(unnamed)") for p in st.session_state["urdb_plans"]]
-            plan_idx= st.selectbox("Select URDB Plan", range(len(plan_names)),
-                                   format_func=lambda i: plan_names[i][:60])
-            if 0<= plan_idx< len(plan_names):
-                chosen_plan= st.session_state["urdb_plans"][plan_idx]
-
-        if chosen_plan:
-            st.write("**Chosen Plan**:", chosen_plan.get("name","(No Name)"))
-            st.write(chosen_plan)
-            parsed_rate= naive_parse_urdb_plan(chosen_plan)
-            st.session_state["urdb_rate_structure"] = parsed_rate
-            st.success(f"Naive parse => {parsed_rate}")
-
-    # ~~~ 3) Common Inputs ~~~
-    st.sidebar.header("Common Inputs")
-    commute_miles = st.sidebar.slider("Daily Commute(miles)", 10, 100, DEFAULT_COMMUTE_MILES)
-    house_kwh_base= st.sidebar.slider("Daily House(kWh)", 10, 50, int(DEFAULT_HOUSEHOLD_CONSUMPTION))
-    fluct= st.sidebar.slider("House Fluctuation(%)",0,50,int(DEFAULT_CONSUMPTION_FLUCTUATION*100))/100
-    solar_size= st.sidebar.slider("Solar(kW)",0,15,int(DEFAULT_SOLAR_SIZE))
-
-    charging_freq= st.sidebar.radio("EV Charging Frequency(Monthly/Basic)", ["Daily","Weekdays Only"])
-    days_per_week= 5 if charging_freq=="Weekdays Only" else 7
-
-    monthly_charge_time= st.sidebar.radio("Monthly Model: EV Charging Time",
-                                         ["Night (Super Off-Peak)","Daytime (Peak)"])
-
-    unified_batt_capacity= st.sidebar.slider("Battery(kWh, for all approaches, unless None)",0,20,int(DEFAULT_BATTERY_CAPACITY))
     # === Smart Panel Setup ===
     st.sidebar.header("Smart Panel Setup")
-    
+
     panel_type = st.sidebar.selectbox(
-        "Panel Type",
+        "1. What kind of panel do you have?",
         ["Legacy", "Smart Subpanel", "Smart Full Panel"]
     )
-    
-    control_ev = st.sidebar.checkbox("Control EV Charger?", value=True)
-    control_hvac = st.sidebar.checkbox("Control HVAC?", value=False)
-    control_water_heater = st.sidebar.checkbox("Control Water Heater?", value=False)
-    control_solar_inverter = st.sidebar.checkbox("Control Solar Inverter?", value=False)
-    control_battery = st.sidebar.checkbox("Control Home Battery?", value=False)
-    
+
+    st.sidebar.markdown("---")
+
+    st.sidebar.subheader("2. Select Which Loads Are Connected to the Smart Panel")
+    control_ev = st.sidebar.checkbox("EV Charger", value=True)
+    control_hvac = st.sidebar.checkbox("HVAC System", value=False)
+    control_water_heater = st.sidebar.checkbox("Water Heater", value=False)
+    control_solar_inverter = st.sidebar.checkbox("Solar Inverter", value=False)
+    control_battery = st.sidebar.checkbox("Home Battery", value=False)
+    control_washer_dryer = st.sidebar.checkbox("Washer/Dryer", value=False)
+    control_dishwasher = st.sidebar.checkbox("Dishwasher", value=False)
+    control_pool_pump = st.sidebar.checkbox("Pool Pump", value=False)
+
     # Create a SmartPanelConfig object
     from models.panel_model import SmartPanelConfig
-    
+
     smart_panel = SmartPanelConfig(
         panel_type=panel_type,
         control_ev=control_ev,
@@ -133,280 +79,83 @@ def main():
         control_battery=control_battery
     )
 
-    # ~~~ 4) Tab Layout ~~~
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-    "Monthly Approach", "Basic Hourly", "Advanced Hourly", "Battery Size Sweep", "Recommendations",
-    "Cost Comparison", "Outage Resilience", "V2H + Payback"
-    ])
+    st.sidebar.markdown("---")
 
+    # 3. EV-Specific Inputs
+    if control_ev:
+        st.sidebar.subheader("3. EV Configuration")
+        charging_freq = st.sidebar.radio("EV Charging Frequency", ["Daily", "Weekdays Only"])
+        default_ev_days_per_week = 5 if charging_freq == "Weekdays Only" else 7
 
+        ev_battery_kwh = st.sidebar.slider("EV Battery Size (kWh)", 20, 150, 50)
+        ev_charging_pattern = st.sidebar.radio("Preferred Charging Time", ["Night", "Daytime"])
+        ev_days_active = st.sidebar.slider("Charging Days per Week", 1, 7, default_ev_days_per_week)
+    else:
+        ev_battery_kwh = 0
+        ev_charging_pattern = "Night"
+        ev_days_active = 0
 
-    with tab1:
-        st.header("Monthly Approach")
-        ev_yearly, ev_monthly = calculate_ev_demand(commute_miles, 4.0, days_per_week)  # or use the actual selected model
-        daily_house_val = house_kwh_base*(1+fluct)
-        house_monthly= calculate_monthly_values(daily_house_val)
-        _, solar_monthly= calculate_solar_production(solar_size)
+    # 4. HVAC-Specific Inputs
+    if control_hvac:
+        st.sidebar.subheader("4. HVAC Configuration")
+        hvac_runtime_hours = st.sidebar.slider("HVAC Runtime per Day (hrs)", 2, 24, 8)
+        hvac_kw = st.sidebar.slider("HVAC Load (kW)", 1.0, 10.0, 3.5)
+    else:
+        hvac_runtime_hours = 0
+        hvac_kw = 0
 
-        ev_no, ev_n2, ev_n3, tot_no, tot_n2, tot_n3= calculate_monthly_costs(
-            ev_monthly, solar_monthly, house_monthly,
-            unified_batt_capacity,
-            monthly_charge_time
-        )
+    # 5. Water Heater Inputs
+    if control_water_heater:
+        st.sidebar.subheader("5. Water Heater Configuration")
+        water_heater_kw = st.sidebar.slider("Water Heater Load (kW)", 1.0, 8.0, 4.5)
+    else:
+        water_heater_kw = 0
 
-        df_m= pd.DataFrame({
-            "Month": MONTH_NAMES,
-            "House(kWh)": house_monthly,
-            "EV(kWh)": ev_monthly,
-            "Solar(kWh)": solar_monthly,
-            "EV(NoSolar,$)": ev_no,
-            "EV(NEM2,$)": ev_n2,
-            "EV(NEM3,$)": ev_n3,
-            "Tot(NoSolar,$)": tot_no,
-            "Tot(NEM2,$)": tot_n2,
-            "Tot(NEM3,$)": tot_n3
-        })
-        st.dataframe(df_m.style.format(precision=2))
+    # 6. Washer/Dryer Inputs
+    if control_washer_dryer:
+        st.sidebar.subheader("6. Washer/Dryer Configuration")
+        washer_runtime_hrs = st.sidebar.slider("Washer/Dryer Runtime (hrs/day)", 0, 3, 1)
+        washer_kw = st.sidebar.slider("Washer/Dryer Load (kW)", 0.5, 3.0, 2.0)
+    else:
+        washer_runtime_hrs = 0
+        washer_kw = 0
 
-        # Example Graph
-        st.write("### Monthly EV Cost Comparison")
-        fig1, ax1= plt.subplots()
-        ax1.plot(df_m["Month"], df_m["EV(NoSolar,$)"], label="No Solar")
-        ax1.plot(df_m["Month"], df_m["EV(NEM2,$)"], label="NEM2")
-        ax1.plot(df_m["Month"], df_m["EV(NEM3,$)"], label="NEM3")
-        ax1.legend()
-        st.pyplot(fig1)
+    # 7. Dishwasher Inputs
+    if control_dishwasher:
+        st.sidebar.subheader("7. Dishwasher Configuration")
+        dishwasher_cycles = st.sidebar.slider("Dishwasher Cycles per Week", 0, 14, 5)
+        dishwasher_kw = st.sidebar.slider("Dishwasher Load (kW)", 0.5, 2.0, 1.2)
+    else:
+        dishwasher_cycles = 0
+        dishwasher_kw = 0
 
-    with tab2:
-        st.header("Basic Hourly")
-        # replicate the basic approach
-        days= DAYS_PER_YEAR
-        daily_house_arr= np.full(days, house_kwh_base*(1+fluct))
-        daily_solar_arr= np.full(days, solar_size*4)
-        # EV usage
-        daily_ev_arr= np.full(days, (commute_miles/4.0)*(days_per_week/7.0))  # or so
+    # 8. Pool Pump Inputs
+    if control_pool_pump:
+        st.sidebar.subheader("8. Pool Pump Configuration")
+        pool_runtime = st.sidebar.slider("Pump Runtime (hrs/day)", 0, 24, 4)
+        pool_kw = st.sidebar.slider("Pump Load (kW)", 0.5, 3.0, 1.5)
+    else:
+        pool_runtime = 0
+        pool_kw = 0
 
-        reset_daily_batt= st.checkbox("Reset Battery Daily(Basic)?",False)
-        if monthly_charge_time=="Night (Super Off-Peak)":
-            ev_basic_pattern= "Night"
-        else:
-            ev_basic_pattern= "Daytime"
+    # 9. Battery System Inputs
+    if control_battery:
+        st.sidebar.subheader("9. Home Battery Configuration")
+        home_battery_kwh = st.sidebar.slider("Home Battery Size (kWh)", 5, 40, 10)
+    else:
+        home_battery_kwh = 0
 
-        cost_b, grid_b, sol_un_b, df_b= run_basic_hourly_sim(
-            daily_house_arr, daily_solar_arr, daily_ev_arr,
-            unified_batt_capacity,
-            ev_basic_pattern,
-            reset_battery_daily= reset_daily_batt
-        )
-        st.write(f"**Total Basic Hourly Cost**= ${cost_b:,.2f}")
-        st.write(f"Grid= {grid_b:,.2f} kWh, UnusedSolar= {sol_un_b:,.2f} kWh")
-
-        # let user pick day
-        day_pick= st.slider("Pick Day(0..364)",0,364,0)
-        df_day= df_b[df_b["day"]== day_pick].copy()
-        st.write(df_day.head(20))
-        # you can do the same plotting as in the original code
-
-    with tab3:
-        st.header("Advanced Hourly LP")
-
-        if not PULP_AVAILABLE:
-            st.error("PuLP not installed => can't do advanced LP.")
-        else:
-            adv_mode= st.selectbox("Battery Mode(Advanced)", ["None","TOU Arbitrage","Self-Consumption","Backup Priority"])
-            backup_r=0.2
-            en_demand= st.checkbox("Enable Demand Charges?",False)
-
-            if st.button("Run Advanced LP"):
-                # build daily arrays, run
-                daily_house2= np.full(DAYS_PER_YEAR, house_kwh_base*(1+fluct))
-                daily_solar2= np.full(DAYS_PER_YEAR, solar_size*4)
-                daily_ev2= np.full(DAYS_PER_YEAR, (commute_miles/4.0)*(days_per_week/7.0))
-
-                # use daytime or night to define ev_arr, ev_dep
-                if monthly_charge_time=="Night (Super Off-Peak)":
-                    ev_arr= 18; ev_dep=7
-                else:
-                    ev_arr= 9; ev_dep=16
-
-                cost_adv, df_adv= run_advanced_lp_sim(
-                    daily_house2, daily_solar2, daily_ev2,
-                    ev_arr, ev_dep,
-                    battery_capacity= unified_batt_capacity,
-                    ev_batt_capacity= 50,
-                    demand_charge_enabled= en_demand,
-                    battery_mode= adv_mode,
-                    backup_reserve_frac= backup_r
-                )
-                if cost_adv is not None:
-                    st.success(f"Advanced LP Annual Cost= ${cost_adv:,.2f}")
-                    st.write(df_adv.head(20))
-                else:
-                    st.warning("No solution or error in solver.")
-
-    with tab4:
-        st.header("Battery Size Sweep")
-        if not PULP_AVAILABLE:
-            st.error("No PuLP => can't do param sweep.")
-        else:
-            st.write("Select battery sizes to test (0..20, step 2 for instance).")
-            if st.button("Run Param Sweep"):
-                daily_house_sw= np.full(DAYS_PER_YEAR, house_kwh_base*(1+fluct))
-                daily_solar_sw= np.full(DAYS_PER_YEAR, solar_size*4)
-                daily_ev_sw= np.full(DAYS_PER_YEAR, (commute_miles/4.0)*(days_per_week/7.0))
-
-                if monthly_charge_time=="Night (Super Off-Peak)":
-                    ev_arr_s=18; ev_dep_s=7
-                else:
-                    ev_arr_s=9; ev_dep_s=16
-
-                sizes= np.arange(0,21,2)
-                df_sweep= param_sweep_battery_sizes(
-                    daily_house_sw, daily_solar_sw, daily_ev_sw,
-                    sizes, ev_arr_s, ev_dep_s,
-                    ev_batt_capacity=50,
-                    demand_charge_enabled=False, # or a checkbox
-                    battery_mode="None"
-                )
-                st.dataframe(df_sweep.style.format(precision=2))
-                figS, axS= plt.subplots()
-                axS.plot(df_sweep["BatterySize(kWh)"], df_sweep["AnnualCost($)"], marker="o")
-                axS.set_xlabel("BatterySize(kWh)")
-                axS.set_ylabel("AnnualCost($)")
-                st.pyplot(figS)
-
-    with tab5:
-        st.header("Recommendations (deepseek R1)")
-
-        st.write("If you have an uploaded PDF bill, we can generate custom suggestions.")
-        if st.button("Generate Recommendations"):
-            recs = get_deepseek_recommendations(user_bill_data)
-            if not recs:
-                st.info("No specific recommendations or missing PDF data.")
-            else:
-                st.success("Here are your custom tips:")
-                for r in recs:
-                    st.write("-", r)
-    with tab6:
-        from models.backup_model import simulate_outage_resilience
-        st.header("Annual Cost Comparison: Legacy Panel vs Smart Panel")
-    
-        days = 365
-        daily_house_arr = np.full(days, house_kwh_base * (1 + fluct))
-        daily_solar_arr = np.full(days, solar_size * 4)
-        daily_ev_arr = np.full(days, (commute_miles / 4.0) * (days_per_week / 7.0))
-    
-        if monthly_charge_time == "Night (Super Off-Peak)":
-            ev_basic_pattern = "Night"
-        else:
-            ev_basic_pattern = "Daytime"
-    
-        # Simulate Legacy Panel (no control)
-        cost_legacy, grid_legacy, sol_un_legacy, df_legacy = run_basic_hourly_sim(
-            daily_house_arr,
-            daily_solar_arr,
-            daily_ev_arr,
-            unified_batt_capacity,
-            ev_basic_pattern,
-            reset_battery_daily=False,
-            smart_panel=None  # Legacy mode
-        )
-    
-        # Simulate Smart Panel (user settings)
-        cost_smart, grid_smart, sol_un_smart, df_smart = run_basic_hourly_sim(
-            daily_house_arr,
-            daily_solar_arr,
-            daily_ev_arr,
-            unified_batt_capacity,
-            ev_basic_pattern,
-            reset_battery_daily=False,
-            smart_panel=smart_panel
-        )
-    
-        st.write(f"**Legacy Panel Total Annual Cost:** ${cost_legacy:,.2f}")
-        st.write(f"**Smart Panel Total Annual Cost:** ${cost_smart:,.2f}")
-    
-        st.write("### Cost Comparison Bar Chart")
-        fig, ax = plt.subplots()
-        labels = ["Legacy Panel", "Smart Panel"]
-        costs = [cost_legacy, cost_smart]
-        ax.bar(labels, costs, color=["red", "green"])
-        ax.set_ylabel("Total Annual Cost ($)")
-        ax.set_title("Smart Panel vs Legacy Panel")
-        st.pyplot(fig)
-    
-        # Extra: Savings Calculation
-        savings = cost_legacy - cost_smart
-        st.success(f"**Annual Savings from Smart Panel: ${savings:,.2f}**")
-    with tab7:
-        st.header("Backup Power Simulation")
-    
-        avg_outage_hours = st.slider("Average Outage Length (hrs)", 1, 24, 4)
-        outages_per_year = st.slider("Number of Outages per Year", 0, 12, 3)
-        critical_load_kw = st.slider("Critical Load (kW during outage)", 1.0, 10.0, 2.5)
-    
-        # Assume EV battery and house battery defined from earlier inputs
-        result = simulate_outage_resilience(
-            ev_battery_kwh=50,  # or let user input EV battery size
-            house_battery_kwh=unified_batt_capacity,
-            critical_load_kw=critical_load_kw,
-            avg_outage_hours=avg_outage_hours,
-            outages_per_year=outages_per_year,
-            smart_panel=smart_panel
-        )
-    
-        st.write(f"**Total Outage Hours per Year:** {result['total_outage_hours']}")
-        st.write(f"**Hours Supported by Backup System:** {result['hours_supported']}")
-        st.write(f"**Coverage Rate:** {result['coverage_rate']}%")
-        st.success(f"**Resilience Score:** {result['resilience_score']}")
-        
-    with tab8:
-        from models.v2h_export_model import simulate_v2h_savings
-        from models.load_priority_model import summarize_load_portfolio
-        from models.installer_finance_model import estimate_payback_costs
-    
-        st.header("V2H Benefit + Installer Payback View")
-    
-        st.subheader("🔌 V2H Energy Export Simulation")
-        v2h_savings = simulate_v2h_savings(
-            ev_batt_kwh=50,
-            max_discharge_kw=7.2,
-            efficiency=0.9,
-            days_active=150,
-            discharge_hours_per_day=3,
-            peak_rate=0.45,
-            offpeak_rate=0.12,
-            smart_panel=smart_panel
-        )
-        st.write(f"**Estimated Annual V2H Savings:** ${v2h_savings:,.2f}")
-    
-        st.subheader("🎯 Load Priority Overview")
-        portfolio = summarize_load_portfolio(smart_panel)
-        st.write(f"**Critical Loads Managed:** {portfolio['critical'] or 'None'}")
-        st.write(f"**Flexible Loads Managed:** {portfolio['flexible'] or 'None'}")
-        st.write(f"**Total Managed Loads:** {portfolio['total_managed']}")
-    
-        st.subheader("💸 Installer Cost Estimator & Payback")
-    
-        panel_cost = estimate_payback_costs(
-            panel_type=panel_type,
-            smart_features=True if smart_panel.panel_type != "Legacy" else False,
-            panel_upgrade_avoided=True,
-            v2h_enabled=True if smart_panel.is_load_controlled("ev") else False,
-            base_cost=2500,
-            install_cost=1200,
-            panel_upgrade_cost=4000
-        )
-        st.write(f"**Estimated System Cost (After Upgrade Savings):** ${panel_cost:,.2f}")
-    
-        years_to_payback = round(panel_cost / max(v2h_savings, 1), 1) if v2h_savings > 0 else "∞"
-        st.write(f"**Payback Period (Years):** {years_to_payback}")
-    
-        fig, ax = plt.subplots()
-        ax.bar(["Cost", "V2H Annual Savings"], [panel_cost, v2h_savings], color=["gray", "green"])
-        ax.set_ylabel("Dollars ($)")
-        ax.set_title("System Cost vs Annual Savings")
-        st.pyplot(fig)
+    # 10. Solar Configuration
+    if control_solar_inverter:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("10. Solar Configuration")
+        solar_size = st.sidebar.slider("Solar PV Size (kW)", 0.0, 20.0, float(DEFAULT_SOLAR_SIZE))
+        solar_orientation = st.sidebar.radio("Orientation", ["South", "East-West", "Flat"])
+        solar_shading = st.sidebar.radio("Shading Level", ["None", "Light", "Moderate", "Heavy"])
+    else:
+        solar_shading = 0
+        solar_orientation = 0
+        solar_size = 0
 
 if __name__=="__main__":
     main()
