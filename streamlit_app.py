@@ -47,6 +47,44 @@ DEFAULT_HOUSEHOLD_CONSUMPTION = 17.8
 DEFAULT_CONSUMPTION_FLUCTUATION = 0.2
 
 def main():
+    # === User Utility Plan Info ===
+    st.sidebar.header("User & Utility Info")
+    user_state = st.sidebar.selectbox("Select Your State", [
+        "AL","AR","AZ","CA","CO","CT","DE","FL","GA","HI","IA","ID","IL","IN",
+        "KS","KY","LA","MA","MD","ME","MI","MN","MO","MS","MT","NC","ND","NE",
+        "NH","NJ","NM","NV","NY","OH","OK","OR","PA","RI","SC","SD","TN","TX",
+        "UT","VA","VT","WA","WI","WV","WY"
+    ])
+
+    user_info = {"state": user_state}
+
+    if st.sidebar.button("🔎 Fetch Rate Plans"):
+        with st.spinner("Retrieving plans for your state..."):
+            plans = fetch_urdb_plans_for_state(user_info["state"])
+            if plans:
+                st.session_state["urdb_plans"] = plans
+                st.sidebar.success(f"Found {len(plans)} plans for {user_info['state']}")
+            else:
+                st.sidebar.warning("No plans found or error.")
+
+    # Show plans if available
+    chosen_plan = None
+    if "urdb_plans" in st.session_state:
+        plan_names = [p.get("name", "Unnamed") for p in st.session_state["urdb_plans"] if p.get("sector") == "Residential"]
+        if plan_names:
+            selected = st.sidebar.selectbox("Select a Residential Rate Plan", plan_names)
+            chosen_plan = next((p for p in st.session_state["urdb_plans"] if p.get("name") == selected), None)
+            if chosen_plan:
+                st.sidebar.markdown("---")
+                st.sidebar.markdown(f"**Selected Plan:**{chosen_plan.get('name')}")
+                parsed = naive_parse_urdb_plan(chosen_plan)
+                st.session_state["urdb_rate_structure"] = parsed
+                st.sidebar.success(f"Parsed Rate: {parsed}")
+        else:
+            st.sidebar.info("No residential plans found.")
+
+    st.sidebar.markdown("---")
+
     # === Smart Panel Setup ===
     st.sidebar.header("Smart Panel Setup")
 
@@ -157,6 +195,12 @@ def main():
         solar_orientation = 0
         solar_size = 0
 
+# === Main Page UI ===
+    st.title("🔌 Smart Panel Energy Dashboard")
+
+    st.markdown("---")
+
+    st.subheader("Configuration Summary")
     load_profile = {
         "panel_type": panel_type,
         "ev": {
@@ -200,27 +244,35 @@ def main():
             "shading": solar_shading,
         }
     }
-    # === Main Page UI ===
-    st.title("🔌 Smart Panel Energy Dashboard")
 
-    st.markdown("---")
-
-    st.subheader("Configuration Summary")
     st.json(load_profile)
 
     st.markdown("---")
-    
+
     # Simulation trigger
     if st.button("🚀 Run Simulation"):
+        daily_house_arr = np.full(DAYS_PER_YEAR, DEFAULT_HOUSEHOLD_CONSUMPTION)
+        daily_solar_arr = np.full(DAYS_PER_YEAR, load_profile["solar"]["size_kw"] * 4)
+        daily_ev_arr = np.full(DAYS_PER_YEAR, (DEFAULT_COMMUTE_MILES / 4.0) * (load_profile["ev"]["charging_days"] / 7.0))
+
+        cost, grid_kwh, unused_solar, df_results = run_basic_hourly_sim(
+            daily_house_arr,
+            daily_solar_arr,
+            daily_ev_arr,
+            load_profile["battery"]["capacity_kwh"],
+            load_profile["ev"]["charging_pattern"],
+            reset_battery_daily=False,
+            smart_panel=smart_panel
+        )
         st.success("Simulation complete! Sample output below.")
 
-        # --- Sample Key Metrics ---
+        # --- Real Key Metrics ---
         st.subheader("📊 Key Performance Metrics")
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Annual Energy Cost", "$1,850")
-        col2.metric("V2H Savings", "$327/year")
-        col3.metric("Payback Period", "5.2 years")
-        col4.metric("Resilience Score", "✅ Excellent")
+        col1.metric("Annual Energy Cost", f"${cost:,.0f}")
+        col2.metric("V2H Savings", "$0 (N/A)")
+        col3.metric("Payback Period", "N/A")
+        col4.metric("Resilience Score", "Pending")
 
         st.markdown("---")
         
@@ -252,7 +304,6 @@ def main():
         with colB:
             if st.button("🖨️ Export Summary"):
                 st.info("Feature coming soon.")
-
 
 if __name__=="__main__":
     main()
